@@ -24,3 +24,4 @@ This table summarize the structure of the project.
 | Service name | Language | Purpose                                                                                      |
 |--------------|----------|----------------------------------------------------------------------------------------------|
 | agentic      | Go       | The core application of Agentic AI, where it will consolidate input, processing, and output. |
+| doll-replica | Go       | This service is only to replicate the behavior of the IoT device, to be able for us testing the agentic service. |
