@@ -1,4 +1,4 @@
-module github.com/satriahrh/lemon/agentic
+module github.com/satriahrh/cocoa-fruit/agentic
 
 go 1.23.1
 

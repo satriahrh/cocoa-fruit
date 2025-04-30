@@ -1,4 +1,4 @@
-module github.com/satriahrh/lemon/doll-replica
+module github.com/satriahrh/cocoa-fruit/doll-replica
 
 go 1.23.1
 

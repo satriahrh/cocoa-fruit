@@ -1,4 +1,4 @@
-# Lemon
+# Cocoa Fruit
 **Talking Doll with AI-Driven Real-Time Conversation**
 
 This project is an IoT-based talking doll that uses AI to engage in real-time conversations. The doll captures user speech, processes it through a cloud-based server for speech-to-text (STT), intelligent text generation, and text-to-speech (TTS), and responds with audio playback. The system leverages WebSocket for persistent, low-latency communication, enabling seamless and interactive conversational experiences.
