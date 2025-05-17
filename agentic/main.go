@@ -1,51 +1,38 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
+	"crypto/subtle"
 	"log"
-	"net/http"
 
-	"github.com/gorilla/websocket"
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+	"github.com/satriahrh/cocoa-fruit/agentic/adapters/llm"
+	"github.com/satriahrh/cocoa-fruit/agentic/adapters/websocket"
+	"github.com/satriahrh/cocoa-fruit/agentic/usecase"
+	"github.com/subosito/gotenv"
 )
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
-
-func wsHandler(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Println("upgrade error:", err)
-		return
-	}
-	defer conn.Close()
-
-	log.Println("Client connected, awaiting text messages...")
-	for {
-		msgType, data, err := conn.ReadMessage()
-		if err != nil {
-			log.Println("read error:", err)
-			break
-		}
-		if msgType != websocket.TextMessage {
-			log.Println("non-text message ignored")
-			continue
-		}
-
-		sum := sha256.Sum256(data)
-		hash := hex.EncodeToString(sum[:])
-		log.Printf("received: %s → hash: %s\n", data, hash)
-
-		if err := conn.WriteMessage(websocket.TextMessage, []byte(hash)); err != nil {
-			log.Println("write error:", err)
-			break
-		}
-	}
-	log.Println("Connection closed.")
-}
-
 func main() {
-	http.HandleFunc("/ws", wsHandler)
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	gotenv.Load()
+
+	geminiLlm := llm.NewGeminiClient()
+	svc := usecase.NewChatService(geminiLlm)
+
+	server := websocket.NewServer(svc)
+
+	e := echo.New()
+	e.Use(middleware.BasicAuth(func(username, password string, c echo.Context) (bool, error) {
+		// Be careful to use constant time comparison to prevent timing attacks
+		if subtle.ConstantTimeCompare([]byte(username), []byte("John")) == 1 &&
+			subtle.ConstantTimeCompare([]byte(password), []byte("Doe")) == 1 {
+			const userID int = 99
+			c.Set("user_id", userID)
+			return true, nil
+		}
+		return false, nil
+	}))
+	e.GET("/ws", server.Handler)
+
+	log.Println("listening on :8080")
+	log.Fatal(e.Start(":8080"))
 }

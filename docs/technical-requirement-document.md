@@ -83,7 +83,7 @@ The project aims to develop an IoT-based talking doll capable of real-time, AI-d
 - **Communication Protocol:** WebSocket over Wi-Fi
 
 #### **Server**
-- **Backend Framework:** Python (FastAPI or Flask) or Node.js
+- **Backend Framework:** Golang
 - **STT Service:** Whisper API or Google Speech-to-Text
 - **Text Generation:** OpenAI GPT-4 or Hugging Face Transformers
 - **TTS Service:** Google TTS or Amazon Polly
