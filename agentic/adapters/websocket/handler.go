@@ -1,10 +1,6 @@
 package websocket
 
 import (
-	"context"
-	"strings"
-
-	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 )
 
@@ -14,37 +10,22 @@ func (s *Server) Handler(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
 
 	userID := c.Get("user_id").(int)
-	input := make(chan string)
-	output := make(chan string)
-	go func(userID int, ctx context.Context) {
-		err := s.svc.Execute(ctx, userID, input, output)
-		if err != nil {
-			output <- "ERROR: " + err.Error()
-		}
-	}(userID, c.Request().Context())
+	deviceID := c.Get("device_id").(string)
+	deviceVersion := c.Get("device_version").(string)
 
-	for {
-		_, msg, err := conn.ReadMessage()
-		if err != nil {
-			break
-		}
-		trimmed := strings.TrimSpace(string(msg))
-		if trimmed == "" {
-			continue // skip blank/whitespace-only messages
-		}
+	client := NewClient(conn, userID, deviceID, deviceVersion)
+	s.hub.Register(client)
 
-		input <- trimmed
+	// Start the client goroutines
+	client.Run()
 
-		responseMessage := <-output
-		if strings.HasPrefix(responseMessage, "ERROR: ") {
-			break
-		}
-		if err := conn.WriteMessage(websocket.TextMessage, []byte(responseMessage)); err != nil {
-			break
-		}
-	}
+	// Register cleanup when client is done
+	defer s.hub.Unregister(client)
+
+	// Wait for the client context to be done (connection closed)
+	<-client.Context().Done()
+
 	return nil
 }

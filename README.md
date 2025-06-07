@@ -11,7 +11,7 @@ This project is an IoT-based talking doll that uses AI to engage in real-time co
 
 ### Tech Stack:
 - **IoT Hardware:** ESP32, INMP441 (microphone), MAX98357A (audio amplifier), 8Ω speaker.
-- **Backend:** Python or Node.js, WebSocket server, cloud-based STT, GPT, and TTS services.
+- **Backend:** Golang, WebSocket server, cloud-based STT, GPT, and TTS services.
 - **Communication Protocol:** WebSocket for bidirectional streaming.
 
 ### About this Project
