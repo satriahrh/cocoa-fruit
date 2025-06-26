@@ -68,9 +68,9 @@ static void send_ping(lws_sorted_usec_list_t *timer) {
         printf("✅ Ping sent: %s (%d bytes)\n", ping_message, result);
     }
 
-    // Schedule next ping in 5 seconds (same as server)
+    // Schedule next ping in PING_INTERVAL_SECONDS seconds (same as server)
     if (!should_exit && websocket_connection) {
-        lws_sul_schedule(websocket_context, 0, timer, send_ping, 5 * LWS_US_PER_SEC);
+        lws_sul_schedule(websocket_context, 0, timer, send_ping, PING_INTERVAL_SECONDS * LWS_US_PER_SEC);
     }
 }
 
@@ -111,8 +111,8 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
             printf("✅ Connected to WebSocket server!\n");
             websocket_connection = wsi;
             
-            // Start sending ping messages every 5 seconds
-            lws_sul_schedule(websocket_context, 0, &ping_timer, send_ping, 5 * LWS_US_PER_SEC);
+            // Start sending ping messages every PING_INTERVAL_SECONDS seconds
+            lws_sul_schedule(websocket_context, 0, &ping_timer, send_ping, PING_INTERVAL_SECONDS * LWS_US_PER_SEC);
             
             // Send initial greeting message
             lws_callback_on_writable(wsi);
@@ -180,6 +180,9 @@ static void signal_handler(int signal) {
     printf("\n🛑 Received signal %d, shutting down...\n", signal);
     should_exit = 1;
 }
+
+// Easy to change later
+static const int PING_INTERVAL_SECONDS = 30;  // More IoT-friendly
 
 int main(void) {
     printf("🚀 Starting C WebSocket client...\n");

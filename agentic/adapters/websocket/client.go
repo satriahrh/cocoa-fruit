@@ -36,9 +36,9 @@ type ErrorResponse struct {
 }
 
 const (
-	writeWait      = 5 * time.Second
+	writeWait      = 10 * time.Second
 	pongWait       = 60 * time.Second
-	pingPeriod     = 5 * time.Second
+	pingPeriod     = 30 * time.Second
 	maxMessageSize = 512 * 1024 // Increased for audio data
 )
 
