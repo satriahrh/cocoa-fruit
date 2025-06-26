@@ -65,9 +65,8 @@ static void send_ping(lws_sorted_usec_list_t *timer) {
     if (result < 0) {
         printf("❌ Failed to send ping (error: %d)\n", result);
         should_exit = 1;
-    } else {
-        printf("✅ Ping sent: %s (%d bytes)\n", ping_message, result);
     }
+    // Ping sent successfully - no need to display it
 
     // Schedule next ping in PING_INTERVAL_SECONDS seconds (same as server)
     if (!should_exit && websocket_connection) {
@@ -143,7 +142,7 @@ static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
             break;
             
         case LWS_CALLBACK_CLIENT_RECEIVE_PONG:
-            printf("🏓 Received pong: %.*s\n", (int)len, (char *)in);
+            // Pong received - connection is healthy, no need to display
             break;
             
         case LWS_CALLBACK_CLOSED:
