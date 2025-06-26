@@ -72,21 +72,31 @@ func (c *Client) Run() {
 // setupHandlers configures all WebSocket message handlers
 func (c *Client) setupHandlers() {
 	c.conn.SetCloseHandler(func(code int, text string) error {
-		log.WithCtx(c.ctx).Debug("WebSocket connection closed", zap.Int("code", code), zap.String("text", text))
+		log.WithCtx(c.ctx).Info("🔌 WebSocket connection closed",
+			zap.Int("code", code),
+			zap.String("text", text),
+			zap.String("device_id", c.ctx.Value("device_id").(string)),
+			zap.Int("user_id", c.ctx.Value("user_id").(int)))
 		c.Close()
 		return nil
 	})
 
 	// Handle incoming ping messages - respond with pong
 	c.conn.SetPingHandler(func(appData string) error {
-		log.WithCtx(c.ctx).Debug("Received ping from client", zap.String("appData", appData))
+		log.WithCtx(c.ctx).Info("🏓 Received ping from doll",
+			zap.String("ping_data", appData),
+			zap.String("device_id", c.ctx.Value("device_id").(string)),
+			zap.Int("user_id", c.ctx.Value("user_id").(int)))
 		c.incomingPing <- appData
 		return c.conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(writeWait))
 	})
 
 	// Handle incoming pong messages - update read deadline
 	c.conn.SetPongHandler(func(appData string) error {
-		log.WithCtx(c.ctx).Debug("Received pong from client", zap.String("appData", appData))
+		log.WithCtx(c.ctx).Info("🏓 Received pong from doll",
+			zap.String("pong_data", appData),
+			zap.String("device_id", c.ctx.Value("device_id").(string)),
+			zap.Int("user_id", c.ctx.Value("user_id").(int)))
 		c.conn.SetReadDeadline(time.Now().Add(pongWait))
 		return nil
 	})
@@ -174,13 +184,20 @@ func (c *Client) readPump() {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.WithCtx(c.ctx).Error("WebSocket error", zap.Error(err))
+				log.WithCtx(c.ctx).Error("❌ WebSocket read error",
+					zap.Error(err),
+					zap.String("device_id", c.ctx.Value("device_id").(string)),
+					zap.Int("user_id", c.ctx.Value("user_id").(int)))
 			}
 			return
 		}
 
 		// Handle the message (you can implement message handling logic here)
-		log.WithCtx(c.ctx).Debug("Received message", zap.ByteString("message", message))
+		log.WithCtx(c.ctx).Info("📨 Received message from doll",
+			zap.String("message", string(message)),
+			zap.Int("message_length", len(message)),
+			zap.String("device_id", c.ctx.Value("device_id").(string)),
+			zap.Int("user_id", c.ctx.Value("user_id").(int)))
 	}
 }
 
@@ -206,9 +223,18 @@ func (c *Client) writePump() {
 			}
 
 			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
-				log.WithCtx(c.ctx).Error("Failed to write message", zap.Error(err))
+				log.WithCtx(c.ctx).Error("❌ Failed to write message to doll",
+					zap.Error(err),
+					zap.String("device_id", c.ctx.Value("device_id").(string)),
+					zap.Int("user_id", c.ctx.Value("user_id").(int)))
 				return
 			}
+
+			log.WithCtx(c.ctx).Info("📤 Sent message to doll",
+				zap.String("message", string(message)),
+				zap.Int("message_length", len(message)),
+				zap.String("device_id", c.ctx.Value("device_id").(string)),
+				zap.Int("user_id", c.ctx.Value("user_id").(int)))
 
 		case <-c.ctx.Done():
 			return
