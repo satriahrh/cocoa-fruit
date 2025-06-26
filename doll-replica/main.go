@@ -19,7 +19,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to connect to server: %v", err)
 	}
-	defer conn.Close()
 
 	// Handle incoming messages in a separate goroutine
 	go func() {
