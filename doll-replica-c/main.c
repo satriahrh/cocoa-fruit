@@ -17,6 +17,7 @@ static const int SERVER_PORT = 8080;
 static const char* WEBSOCKET_PATH = "/ws";
 static const char* AUTH_USERNAME = "John";
 static const char* AUTH_PASSWORD = "Doe";
+static const int PING_INTERVAL_SECONDS = 30;  // More IoT-friendly
 
 // Base64 encoding table
 static const char base64_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -180,9 +181,6 @@ static void signal_handler(int signal) {
     printf("\n🛑 Received signal %d, shutting down...\n", signal);
     should_exit = 1;
 }
-
-// Easy to change later
-static const int PING_INTERVAL_SECONDS = 30;  // More IoT-friendly
 
 int main(void) {
     printf("🚀 Starting C WebSocket client...\n");
