@@ -17,6 +17,11 @@ int should_exit = 0;
 // Timer structure for ping messages
 static lws_sorted_usec_list_t ping_timer;
 
+// Buffer for accumulating incoming WebSocket data
+#define INCOMING_BUFFER_SIZE (1024 * 256)
+static char incoming_buffer[INCOMING_BUFFER_SIZE];
+static size_t incoming_buffer_len = 0;
+
 // Function to send ping message
 static void send_ping(lws_sorted_usec_list_t *timer) {
     if (!websocket_connection || should_exit) {
@@ -126,18 +131,29 @@ int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         case LWS_CALLBACK_CLIENT_RECEIVE: {
             char timestamp[16];
             get_timestamp(timestamp, sizeof(timestamp));
-            
-            // Try to parse as JSON first
-            cJSON *json = cJSON_Parse((char *)in);
+
+            // Append incoming data to buffer
+            if (incoming_buffer_len + len < INCOMING_BUFFER_SIZE) {
+                memcpy(incoming_buffer + incoming_buffer_len, in, len);
+                incoming_buffer_len += len;
+                incoming_buffer[incoming_buffer_len] = '\0';
+            } else {
+                printf("❌ Incoming buffer overflow, clearing buffer\n");
+                incoming_buffer_len = 0;
+                incoming_buffer[0] = '\0';
+            }
+
+            // Try to parse as JSON
+            cJSON *json = cJSON_Parse(incoming_buffer);
             if (json) {
                 // Check if it's an audio message
                 cJSON *audio_data = cJSON_GetObjectItem(json, "audio");
                 cJSON *text_data = cJSON_GetObjectItem(json, "text");
-                
+
                 if (audio_data && audio_data->valuestring) {
                     printf("[%s] Server: [AUDIO MESSAGE]\n", timestamp);
                     printf("🔊 Playing audio response...\n");
-                    
+
                     // Play the audio
                     if (play_audio_from_base64(audio_data->valuestring)) {
                         printf("✅ Audio played successfully\n");
@@ -145,17 +161,21 @@ int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
                         printf("❌ Failed to play audio\n");
                     }
                 }
-                
+
                 if (text_data && text_data->valuestring) {
                     printf("[%s] Server: %s\n", timestamp, text_data->valuestring);
                 }
-                
+
                 cJSON_Delete(json);
+                // Clear buffer after successful parse
+                incoming_buffer_len = 0;
+                incoming_buffer[0] = '\0';
             } else {
-                // Fallback to plain text
-                printf("[%s] Server: %.*s\n", timestamp, (int)len, (char *)in);
+                // Not a complete JSON yet, wait for more data
+                // Optionally, print debug info
+                // printf("🔍 Waiting for more data to complete JSON (current length: %zu)\n", incoming_buffer_len);
             }
-            
+
             printf("> ");
             fflush(stdout);
             break;

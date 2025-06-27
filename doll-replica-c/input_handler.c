@@ -3,6 +3,7 @@
 #include "message_queue.h"
 #include "utils.h"
 #include "websocket_client.h"
+#include "audio.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -15,6 +16,7 @@ void* input_thread(void *arg) {
     char timestamp[16];
     
     printf("\n💬 Type your message and press Enter to send (Ctrl+C to exit):\n");
+    printf("🎤 Commands: 'record' to start recording, 'stop' to stop recording\n");
     printf("> ");
     fflush(stdout);
     
@@ -42,7 +44,59 @@ void* input_thread(void *arg) {
             continue;
         }
         
-        // Add message to queue
+        // Handle recording commands
+        if (strcmp(input_buffer, "record") == 0) {
+            if (start_recording()) {
+                printf("🎤 Recording started! Say something and type 'stop' to end recording.\n");
+            } else {
+                printf("❌ Failed to start recording\n");
+            }
+            printf("> ");
+            fflush(stdout);
+            continue;
+        }
+        
+        if (strcmp(input_buffer, "stop") == 0) {
+            if (stop_recording()) {
+                printf("⏹️  Recording stopped. Processing audio...\n");
+                
+                // Get recorded audio and send it
+                unsigned char *audio_data;
+                size_t audio_size;
+                if (get_recorded_audio(&audio_data, &audio_size)) {
+                    // Encode to base64
+                    char *base64_audio;
+                    if (encode_audio_to_base64(audio_data, audio_size, &base64_audio)) {
+                        // Create JSON message with audio
+                        char json_message[4096];
+                        snprintf(json_message, sizeof(json_message), 
+                                "{\"type\":\"audio\",\"audio\":\"%s\"}", base64_audio);
+                        
+                        // Add to message queue
+                        if (add_message_to_queue(json_message)) {
+                            get_timestamp(timestamp, sizeof(timestamp));
+                            printf("[%s] You: [AUDIO MESSAGE] (%zu bytes)\n", timestamp, audio_size);
+                            
+                            // Trigger WebSocket writeable callback
+                            if (websocket_connection) {
+                                lws_callback_on_writable(websocket_connection);
+                                lws_service(websocket_context, 0);
+                            }
+                        }
+                        
+                        free(base64_audio);
+                    }
+                    free(audio_data);
+                }
+            } else {
+                printf("❌ Failed to stop recording\n");
+            }
+            printf("> ");
+            fflush(stdout);
+            continue;
+        }
+        
+        // Regular text message handling
         if (add_message_to_queue(input_buffer)) {
             get_timestamp(timestamp, sizeof(timestamp));
             printf("[%s] You: %s\n", timestamp, input_buffer);
