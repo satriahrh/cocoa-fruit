@@ -6,18 +6,23 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/satriahrh/cocoa-fruit/agentic/usecase"
 	"github.com/satriahrh/cocoa-fruit/agentic/utils/log"
 	"go.uber.org/zap"
 )
 
 type Client struct {
-	conn         *websocket.Conn
-	send         chan []byte
-	incomingPing chan string
-	ctx          context.Context
-	cancel       context.CancelFunc
-	mu           sync.RWMutex
-	closed       bool
+	conn          *websocket.Conn
+	send          chan []byte
+	incomingPing  chan string
+	ctx           context.Context
+	cancel        context.CancelFunc
+	mu            sync.RWMutex
+	closed        bool
+	userID        int
+	deviceID      string
+	deviceVersion string
+	chatService   *usecase.ChatService
 }
 
 // Message types following your integration platform patterns
@@ -43,19 +48,23 @@ const (
 )
 
 // NewClient creates a new WebSocket client
-func NewClient(conn *websocket.Conn, userID int, deviceID, deviceVersion string) *Client {
+func NewClient(conn *websocket.Conn, userID int, deviceID, deviceVersion string, chatService *usecase.ChatService) *Client {
 	ctx := context.TODO()
 	ctx = context.WithValue(ctx, "user_id", userID)
 	ctx = context.WithValue(ctx, "device_id", deviceID)
 	ctx = context.WithValue(ctx, "device_version", deviceVersion)
 	ctx, cancel := context.WithCancel(ctx)
 	return &Client{
-		conn:         conn,
-		send:         make(chan []byte, 256),
-		incomingPing: make(chan string, 1),
-		ctx:          ctx,
-		cancel:       cancel,
-		closed:       false,
+		conn:          conn,
+		send:          make(chan []byte, 256),
+		incomingPing:  make(chan string, 1),
+		ctx:           ctx,
+		cancel:        cancel,
+		closed:        false,
+		userID:        userID,
+		deviceID:      deviceID,
+		deviceVersion: deviceVersion,
+		chatService:   chatService,
 	}
 }
 
@@ -176,6 +185,34 @@ func (c *Client) readPump() {
 	c.conn.SetReadLimit(maxMessageSize)
 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
 
+	// Create channels for chat service
+	inputChan := make(chan string, 10)
+	outputChan := make(chan string, 10)
+
+	// Start chat service in a goroutine
+	go func() {
+		if err := c.chatService.Execute(c.ctx, c.userID, inputChan, outputChan); err != nil {
+			log.WithCtx(c.ctx).Error("❌ Chat service error", zap.Error(err))
+		}
+	}()
+
+	// Start response handler goroutine
+	go func() {
+		for {
+			select {
+			case response := <-outputChan:
+				if !c.IsClosed() {
+					// Send response back to the doll
+					if err := c.SendMessage([]byte(response)); err != nil {
+						log.WithCtx(c.ctx).Error("❌ Failed to send response to doll", zap.Error(err))
+					}
+				}
+			case <-c.ctx.Done():
+				return
+			}
+		}
+	}()
+
 	for {
 		if c.IsClosed() {
 			return
@@ -192,12 +229,22 @@ func (c *Client) readPump() {
 			return
 		}
 
-		// Handle the message (you can implement message handling logic here)
+		// Log the received message
 		log.WithCtx(c.ctx).Info("📨 Received message from doll",
 			zap.String("message", string(message)),
 			zap.Int("message_length", len(message)),
 			zap.String("device_id", c.ctx.Value("device_id").(string)),
 			zap.Int("user_id", c.ctx.Value("user_id").(int)))
+
+		// Send message to chat service for processing
+		select {
+		case inputChan <- string(message):
+			// Message sent to chat service successfully
+		case <-c.ctx.Done():
+			return
+		default:
+			log.WithCtx(c.ctx).Error("❌ Chat service input channel is full")
+		}
 	}
 }
 

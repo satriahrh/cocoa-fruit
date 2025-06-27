@@ -4,7 +4,7 @@ import "context"
 
 // Llm abstracts any chat/LLM provider.
 type Llm interface {
-	// Generate takes a user prompt and returns the model’s reply.
+	// Generate takes a user prompt and returns the model's reply.
 	Generate(prompt string) (string, error)
 	GenerateChat(ctx context.Context, history []ChatMessage) (ChatSession, error)
 }
@@ -22,6 +22,7 @@ type ChatMessage struct {
 type Role string
 
 const (
-	UserRole Role = "user"
-	DollRole Role = "doll"
+	UserRole   Role = "user"
+	DollRole   Role = "doll"
+	SystemRole Role = "system"
 )

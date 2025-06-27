@@ -49,35 +49,68 @@ func (g *GeminiClient) Generate(prompt string) (string, error) {
 }
 
 func (g *GeminiClient) GenerateChat(ctx context.Context, history []domain.ChatMessage) (domain.ChatSession, error) {
-	geminiHistory := make([]*genai.Content, len(history))
-	for i, msg := range history {
+	// Create system prompt message
+	systemPrompt := domain.ChatMessage{
+		Role:    domain.SystemRole,
+		Content: "You are a friendly talking doll for a 5-year-old girl named [Girl's Name] who goes to Little Caliph kindergarten, KG 1 Al Aqsha class. You are her special friend and helper. Keep your responses very short and simple - maximum 3 sentences. Use simple words that a 5-year-old can understand. Be cheerful, encouraging, and educational. You can help with learning, answer questions about school, and be a good friend.",
+	}
+
+	// Prepend system prompt to history if it's not already there
+	hasSystemPrompt := false
+	if len(history) > 0 && history[0].Role == domain.SystemRole {
+		hasSystemPrompt = true
+	}
+
+	var geminiHistory []*genai.Content
+
+	// Add system prompt if not already present
+	if !hasSystemPrompt {
+		geminiHistory = append(geminiHistory, &genai.Content{
+			Role: genai.RoleUser, // Gemini uses RoleUser for system prompts
+			Parts: []*genai.Part{
+				{Text: systemPrompt.Content},
+			},
+		})
+	}
+
+	// Convert domain messages to Gemini format
+	for _, msg := range history {
+		// Skip system messages as they're handled separately
+		if msg.Role == domain.SystemRole {
+			continue
+		}
+
 		role := genai.RoleModel
 		if msg.Role == domain.UserRole {
 			role = genai.RoleUser
 		}
-		geminiHistory[i] = &genai.Content{
+
+		geminiHistory = append(geminiHistory, &genai.Content{
 			Role: role,
 			Parts: []*genai.Part{
 				{Text: msg.Content},
 			},
-		}
+		})
 	}
+
 	chat, err := g.client.Chats.Create(ctx, "gemini-2.0-flash-001", nil, geminiHistory)
 	if err != nil {
 		panic(fmt.Errorf("creating chat: %w", err))
 	}
 
 	chatSession := &GeminiChatSession{
-		client: g.client,
-		chat:   chat,
+		client:       g.client,
+		chat:         chat,
+		systemPrompt: systemPrompt,
 	}
 
 	return chatSession, nil
 }
 
 type GeminiChatSession struct {
-	client *genai.Client
-	chat   *genai.Chat
+	client       *genai.Client
+	chat         *genai.Chat
+	systemPrompt domain.ChatMessage
 }
 
 // SendMessage implements domain.ChatSession.
@@ -99,8 +132,13 @@ func (g *GeminiChatSession) SendMessage(ctx context.Context, message domain.Chat
 
 func (g *GeminiChatSession) History() ([]domain.ChatMessage, error) {
 	resp := g.chat.History(false)
-	history := make([]domain.ChatMessage, len(resp))
-	for i, part := range resp {
+	history := make([]domain.ChatMessage, 0, len(resp)+1) // +1 for system prompt
+
+	// Add system prompt at the beginning
+	history = append(history, g.systemPrompt)
+
+	// Convert Gemini history to domain format
+	for _, part := range resp {
 		// Extract text from part.Parts
 		var content string
 		for _, p := range part.Parts {
@@ -110,10 +148,10 @@ func (g *GeminiChatSession) History() ([]domain.ChatMessage, error) {
 		if part.Role == genai.RoleUser {
 			role = domain.UserRole
 		}
-		history[i] = domain.ChatMessage{
+		history = append(history, domain.ChatMessage{
 			Role:    role,
 			Content: content,
-		}
+		})
 	}
 	return history, nil
 }

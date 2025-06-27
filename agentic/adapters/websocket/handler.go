@@ -24,7 +24,7 @@ func (s *Server) Handler(c echo.Context) error {
 		zap.String("device_version", deviceVersion),
 		zap.String("remote_addr", c.Request().RemoteAddr))
 
-	client := NewClient(conn, userID, deviceID, deviceVersion)
+	client := NewClient(conn, userID, deviceID, deviceVersion, s.svc)
 	s.hub.Register(client)
 
 	// Start the client goroutines
