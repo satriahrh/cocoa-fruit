@@ -2,6 +2,9 @@ package websocket
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"io/ioutil"
 	"sync"
 	"time"
 
@@ -46,6 +49,23 @@ const (
 	pingPeriod     = 30 * time.Second
 	maxMessageSize = 512 * 1024 // Increased for audio data
 )
+
+// AudioResponse represents the JSON response sent to the doll
+type AudioResponse struct {
+	Text  string `json:"text"`
+	Audio string `json:"audio"`
+}
+
+// getStaticAudioBase64 reads the congratulations WAV file and converts it to base64
+func getStaticAudioBase64() string {
+	audioData, err := ioutil.ReadFile("sample/congratulations-male-mono.wav")
+	if err != nil {
+		log.WithCtx(context.Background()).Error("❌ Failed to read audio file", zap.Error(err))
+		return ""
+	}
+
+	return base64.StdEncoding.EncodeToString(audioData)
+}
 
 // NewClient creates a new WebSocket client
 func NewClient(conn *websocket.Conn, userID int, deviceID, deviceVersion string, chatService *usecase.ChatService) *Client {
@@ -202,8 +222,20 @@ func (c *Client) readPump() {
 			select {
 			case response := <-outputChan:
 				if !c.IsClosed() {
+					// Create JSON response with text and audio
+					audioResponse := AudioResponse{
+						Text:  response,
+						Audio: getStaticAudioBase64(),
+					}
+
+					responseJSON, err := json.Marshal(audioResponse)
+					if err != nil {
+						log.WithCtx(c.ctx).Error("❌ Failed to marshal audio response", zap.Error(err))
+						continue
+					}
+
 					// Send response back to the doll
-					if err := c.SendMessage([]byte(response)); err != nil {
+					if err := c.SendMessage(responseJSON); err != nil {
 						log.WithCtx(c.ctx).Error("❌ Failed to send response to doll", zap.Error(err))
 					}
 				}
