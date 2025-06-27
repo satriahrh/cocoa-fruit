@@ -94,36 +94,62 @@ int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
             lws_sul_schedule(websocket_context, 0, &ping_timer, send_ping, PING_INTERVAL_SECONDS * LWS_US_PER_SEC);
             
             // Send initial greeting message
-            printf("🔍 DEBUG: Connection established, scheduling writeable callback\n");
             lws_callback_on_writable(wsi);
             break;
             
         case LWS_CALLBACK_CLIENT_WRITEABLE: {
-            printf("🔍 DEBUG: Writeable callback triggered\n");
             // Send queued messages
             char message_to_send[MAX_MESSAGE_LENGTH];
             int message_length;
+            unsigned char *binary_data = NULL;
+            size_t binary_size;
             
-            if (get_message_from_queue(message_to_send, &message_length)) {
-                printf("🔍 DEBUG: Sending message: '%s' (length: %d)\n", message_to_send, message_length);
+            // Try to get binary message first
+            if (get_binary_message_from_queue(&binary_data, &binary_size)) {
+                printf("🔍 DEBUG: Attempting to send binary message of length %zu bytes\n", binary_size);
+                
+                // Allocate buffer dynamically
+                unsigned char *message_buffer = malloc(LWS_PRE + binary_size);
+                if (message_buffer) {
+                    memcpy(&message_buffer[LWS_PRE], binary_data, binary_size);
+                    
+                    int result = lws_write(wsi, &message_buffer[LWS_PRE], binary_size, LWS_WRITE_BINARY);
+                    if (result < 0) {
+                        printf("❌ Failed to send binary message (error: %d)\n", result);
+                    } else {
+                        printf("🔍 DEBUG: lws_write returned %d bytes (expected %zu)\n", result, binary_size);
+                    }
+                    
+                    free(message_buffer);
+                } else {
+                    printf("❌ Failed to allocate memory for binary message\n");
+                }
+                
+                // Free the binary data
+                free(binary_data);
+                
+                // If there are more messages in queue, schedule another write
+                if (queue_head != queue_tail) {
+                    lws_callback_on_writable(wsi);
+                }
+            } else if (get_message_from_queue(message_to_send, &message_length)) {
+                // Handle text messages
+                printf("🔍 DEBUG: Attempting to send text message of length %d bytes\n", message_length);
                 
                 unsigned char message_buffer[LWS_PRE + MAX_MESSAGE_LENGTH];
                 memcpy(&message_buffer[LWS_PRE], message_to_send, message_length);
                 
                 int result = lws_write(wsi, &message_buffer[LWS_PRE], message_length, LWS_WRITE_TEXT);
-                if (result >= 0) {
-                    printf("✅ DEBUG: Message sent successfully (%d bytes)\n", result);
-                } else {
+                if (result < 0) {
                     printf("❌ Failed to send message (error: %d)\n", result);
+                } else {
+                    printf("🔍 DEBUG: lws_write returned %d bytes (expected %d)\n", result, message_length);
                 }
                 
                 // If there are more messages in queue, schedule another write
                 if (queue_head != queue_tail) {
-                    printf("🔍 DEBUG: More messages in queue, scheduling another write\n");
                     lws_callback_on_writable(wsi);
                 }
-            } else {
-                printf("🔍 DEBUG: No messages in queue to send\n");
             }
             break;
         }
@@ -143,38 +169,12 @@ int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
                 incoming_buffer[0] = '\0';
             }
 
-            // Try to parse as JSON
-            cJSON *json = cJSON_Parse(incoming_buffer);
-            if (json) {
-                // Check if it's an audio message
-                cJSON *audio_data = cJSON_GetObjectItem(json, "audio");
-                cJSON *text_data = cJSON_GetObjectItem(json, "text");
-
-                if (audio_data && audio_data->valuestring) {
-                    printf("[%s] Server: [AUDIO MESSAGE]\n", timestamp);
-                    printf("🔊 Playing audio response...\n");
-
-                    // Play the audio
-                    if (play_audio_from_base64(audio_data->valuestring)) {
-                        printf("✅ Audio played successfully\n");
-                    } else {
-                        printf("❌ Failed to play audio\n");
-                    }
-                }
-
-                if (text_data && text_data->valuestring) {
-                    printf("[%s] Server: %s\n", timestamp, text_data->valuestring);
-                }
-
-                cJSON_Delete(json);
-                // Clear buffer after successful parse
-                incoming_buffer_len = 0;
-                incoming_buffer[0] = '\0';
-            } else {
-                // Not a complete JSON yet, wait for more data
-                // Optionally, print debug info
-                // printf("🔍 Waiting for more data to complete JSON (current length: %zu)\n", incoming_buffer_len);
-            }
+            // Display the raw text response from server
+            printf("[%s] Server: %s\n", timestamp, incoming_buffer);
+            
+            // Clear buffer after processing
+            incoming_buffer_len = 0;
+            incoming_buffer[0] = '\0';
 
             printf("> ");
             fflush(stdout);
@@ -209,7 +209,7 @@ static struct lws_protocols protocols[] = {
         "websocket",           // Protocol name
         websocket_callback,    // Callback function
         0,                     // Per-session data size
-        512,                   // Max frame size
+        MAX_MESSAGE_LENGTH,    // Max frame size - match MAX_MESSAGE_LENGTH
         0, NULL, 0             // Additional parameters
     },
     { NULL, NULL, 0, 0, 0, NULL, 0 }  // Terminator

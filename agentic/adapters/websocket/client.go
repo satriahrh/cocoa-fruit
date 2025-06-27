@@ -3,12 +3,13 @@ package websocket
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/satriahrh/cocoa-fruit/agentic/adapters/speech"
 	"github.com/satriahrh/cocoa-fruit/agentic/usecase"
 	"github.com/satriahrh/cocoa-fruit/agentic/utils/log"
 	"go.uber.org/zap"
@@ -26,6 +27,7 @@ type Client struct {
 	deviceID      string
 	deviceVersion string
 	chatService   *usecase.ChatService
+	googleSpeech  *speech.GoogleSpeech
 }
 
 // Message types following your integration platform patterns
@@ -67,8 +69,25 @@ func getStaticAudioBase64() string {
 	return base64.StdEncoding.EncodeToString(audioData)
 }
 
+// isPrintableText checks if the data contains mostly printable ASCII characters
+func isPrintableText(data []byte) bool {
+	if len(data) == 0 {
+		return true
+	}
+
+	printableCount := 0
+	for _, b := range data {
+		if b >= 32 && b <= 126 { // Printable ASCII range
+			printableCount++
+		}
+	}
+
+	// Consider it text if more than 80% is printable
+	return float64(printableCount)/float64(len(data)) > 0.8
+}
+
 // NewClient creates a new WebSocket client
-func NewClient(conn *websocket.Conn, userID int, deviceID, deviceVersion string, chatService *usecase.ChatService) *Client {
+func NewClient(conn *websocket.Conn, userID int, deviceID, deviceVersion string, chatService *usecase.ChatService, googleSpeech *speech.GoogleSpeech) *Client {
 	ctx := context.TODO()
 	ctx = context.WithValue(ctx, "user_id", userID)
 	ctx = context.WithValue(ctx, "device_id", deviceID)
@@ -85,6 +104,7 @@ func NewClient(conn *websocket.Conn, userID int, deviceID, deviceVersion string,
 		deviceID:      deviceID,
 		deviceVersion: deviceVersion,
 		chatService:   chatService,
+		googleSpeech:  googleSpeech,
 	}
 }
 
@@ -112,7 +132,7 @@ func (c *Client) setupHandlers() {
 
 	// Handle incoming ping messages - respond with pong
 	c.conn.SetPingHandler(func(appData string) error {
-		log.WithCtx(c.ctx).Info("🏓 Received ping from doll",
+		log.WithCtx(c.ctx).Debug("🏓 Received ping from doll",
 			zap.String("ping_data", appData),
 			zap.String("device_id", c.ctx.Value("device_id").(string)),
 			zap.Int("user_id", c.ctx.Value("user_id").(int)))
@@ -122,7 +142,7 @@ func (c *Client) setupHandlers() {
 
 	// Handle incoming pong messages - update read deadline
 	c.conn.SetPongHandler(func(appData string) error {
-		log.WithCtx(c.ctx).Info("🏓 Received pong from doll",
+		log.WithCtx(c.ctx).Debug("🏓 Received pong from doll",
 			zap.String("pong_data", appData),
 			zap.String("device_id", c.ctx.Value("device_id").(string)),
 			zap.Int("user_id", c.ctx.Value("user_id").(int)))
@@ -222,20 +242,8 @@ func (c *Client) readPump() {
 			select {
 			case response := <-outputChan:
 				if !c.IsClosed() {
-					// Create JSON response with text and audio
-					audioResponse := AudioResponse{
-						Text:  response,
-						Audio: getStaticAudioBase64(),
-					}
-
-					responseJSON, err := json.Marshal(audioResponse)
-					if err != nil {
-						log.WithCtx(c.ctx).Error("❌ Failed to marshal audio response", zap.Error(err))
-						continue
-					}
-
-					// Send response back to the doll
-					if err := c.SendMessage(responseJSON); err != nil {
+					// Send response back to the doll as raw text
+					if err := c.SendMessage([]byte(response)); err != nil {
 						log.WithCtx(c.ctx).Error("❌ Failed to send response to doll", zap.Error(err))
 					}
 				}
@@ -250,7 +258,7 @@ func (c *Client) readPump() {
 			return
 		}
 
-		_, message, err := c.conn.ReadMessage()
+		messageType, message, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.WithCtx(c.ctx).Error("❌ WebSocket read error",
@@ -262,13 +270,73 @@ func (c *Client) readPump() {
 		}
 
 		// Log the received message
+		msgType := "text"
+		messagePreview := string(message)
+		if len(messagePreview) > 50 {
+			messagePreview = messagePreview[:50] + "..."
+		}
+
+		// Check if it's binary audio data (binary message type or large binary message)
+		if messageType == websocket.BinaryMessage || (len(message) > 1000 && !isPrintableText(message)) {
+			msgType = "audio"
+			messagePreview = fmt.Sprintf("[BINARY AUDIO: %d bytes]", len(message))
+
+			log.WithCtx(c.ctx).Info("🎤 Received binary audio message, transcribing...",
+				zap.Int("websocket_message_type", messageType),
+				zap.String("device_id", c.ctx.Value("device_id").(string)),
+				zap.Int("user_id", c.ctx.Value("user_id").(int)))
+
+			// Convert binary to base64 for the speech service
+			base64Audio := base64.StdEncoding.EncodeToString(message)
+
+			log.WithCtx(c.ctx).Info("🔄 Converted binary to base64",
+				zap.Int("binary_bytes", len(message)),
+				zap.Int("base64_length", len(base64Audio)),
+				zap.String("device_id", c.ctx.Value("device_id").(string)),
+				zap.Int("user_id", c.ctx.Value("user_id").(int)))
+
+			// Transcribe audio to text
+			transcript, err := c.googleSpeech.TranscribeAudio(c.ctx, base64Audio)
+			if err != nil {
+				log.WithCtx(c.ctx).Error("❌ Failed to transcribe audio",
+					zap.Error(err),
+					zap.String("device_id", c.ctx.Value("device_id").(string)),
+					zap.Int("user_id", c.ctx.Value("user_id").(int)))
+				continue
+			}
+
+			if transcript == "" {
+				log.WithCtx(c.ctx).Warn("⚠️ Audio transcription returned empty result",
+					zap.String("device_id", c.ctx.Value("device_id").(string)),
+					zap.Int("user_id", c.ctx.Value("user_id").(int)))
+				continue
+			}
+
+			log.WithCtx(c.ctx).Info("✅ Audio transcribed successfully",
+				zap.String("transcript", transcript),
+				zap.String("device_id", c.ctx.Value("device_id").(string)),
+				zap.Int("user_id", c.ctx.Value("user_id").(int)))
+
+			// Send transcribed text to chat service
+			select {
+			case inputChan <- transcript:
+				// Transcribed text sent to chat service successfully
+			case <-c.ctx.Done():
+				return
+			default:
+				log.WithCtx(c.ctx).Error("❌ Chat service input channel is full")
+			}
+			continue
+		}
+
 		log.WithCtx(c.ctx).Info("📨 Received message from doll",
-			zap.String("message", string(message)),
+			zap.String("type", msgType),
+			zap.String("preview", messagePreview),
 			zap.Int("message_length", len(message)),
 			zap.String("device_id", c.ctx.Value("device_id").(string)),
 			zap.Int("user_id", c.ctx.Value("user_id").(int)))
 
-		// Send message to chat service for processing
+		// Handle as regular text message
 		select {
 		case inputChan <- string(message):
 			// Message sent to chat service successfully
@@ -310,7 +378,13 @@ func (c *Client) writePump() {
 			}
 
 			log.WithCtx(c.ctx).Info("📤 Sent message to doll",
-				zap.String("message", string(message)),
+				zap.String("preview", func() string {
+					msgStr := string(message)
+					if len(msgStr) > 50 {
+						return msgStr[:50] + "..."
+					}
+					return msgStr
+				}()),
 				zap.Int("message_length", len(message)),
 				zap.String("device_id", c.ctx.Value("device_id").(string)),
 				zap.Int("user_id", c.ctx.Value("user_id").(int)))

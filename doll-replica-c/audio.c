@@ -34,10 +34,21 @@ static int recording_callback(const void *inputBuffer, void *outputBuffer,
         if (recording_buffer_used + bytes_to_write <= max_recording_size) {
             memcpy(recording_buffer + recording_buffer_used, inputBuffer, bytes_to_write);
             recording_buffer_used += bytes_to_write;
+            
+            // Debug: log every 1000 frames (about every 2 seconds at 16kHz)
+            static int frame_count = 0;
+            frame_count++;
+            if (frame_count % 1000 == 0) {
+                printf("🔍 DEBUG: Recording callback called, captured %zu bytes so far\n", recording_buffer_used);
+            }
         } else {
-            // Buffer full, stop recording
-            recording_active = 0;
+            // Buffer full, but don't stop recording - just stop capturing
+            printf("🔍 DEBUG: Recording buffer full (%zu bytes), stopping capture but keeping stream active\n", recording_buffer_used);
+            // Don't set recording_active = 0 here, just stop capturing
         }
+    } else {
+        printf("🔍 DEBUG: Recording callback called but inputBuffer=%p, recording_active=%d\n", 
+               inputBuffer, recording_active);
     }
     
     return paContinue;

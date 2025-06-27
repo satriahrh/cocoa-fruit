@@ -8,11 +8,17 @@
 typedef struct {
     char message[MAX_MESSAGE_LENGTH];
     int length;
+    int is_binary;
+    // For large binary data, store pointer instead of copying
+    unsigned char *large_binary_data;
+    size_t large_binary_size;
 } queued_message_t;
 
 // Message queue functions
 int add_message_to_queue(const char *message);
+int add_binary_message_to_queue(const unsigned char *data, size_t data_size);
 int get_message_from_queue(char *message, int *length);
+int get_binary_message_from_queue(unsigned char **data, size_t *data_size);
 void init_message_queue(void);
 void cleanup_message_queue(void);
 

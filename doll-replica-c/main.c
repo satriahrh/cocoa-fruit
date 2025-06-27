@@ -73,7 +73,7 @@ int main(void) {
     
     // Main event loop
     while (!should_exit) {
-        lws_service(websocket_context, 100);  // 100ms timeout for more responsive input
+        lws_service(websocket_context, 10);  // 10ms timeout for more responsive input
     }
     
     // Cleanup

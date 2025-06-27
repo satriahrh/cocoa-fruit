@@ -64,29 +64,34 @@ void* input_thread(void *arg) {
                 unsigned char *audio_data;
                 size_t audio_size;
                 if (get_recorded_audio(&audio_data, &audio_size)) {
-                    // Encode to base64
-                    char *base64_audio;
-                    if (encode_audio_to_base64(audio_data, audio_size, &base64_audio)) {
-                        // Create JSON message with audio
-                        char json_message[4096];
-                        snprintf(json_message, sizeof(json_message), 
-                                "{\"type\":\"audio\",\"audio\":\"%s\"}", base64_audio);
+                    printf("🔍 DEBUG: Got recorded audio, size: %zu bytes\n", audio_size);
+                    
+                    // Send raw binary audio data directly
+                    if (add_binary_message_to_queue(audio_data, audio_size)) {
+                        printf("🔍 DEBUG: Binary message added to queue successfully\n");
+                        get_timestamp(timestamp, sizeof(timestamp));
+                        printf("[%s] You: [BINARY AUDIO] (%zu bytes)\n", timestamp, audio_size);
                         
-                        // Add to message queue
-                        if (add_message_to_queue(json_message)) {
-                            get_timestamp(timestamp, sizeof(timestamp));
-                            printf("[%s] You: [AUDIO MESSAGE] (%zu bytes)\n", timestamp, audio_size);
+                        // Trigger WebSocket writeable callback
+                        if (websocket_connection) {
+                            printf("🔍 DEBUG: Triggering WebSocket writeable callback\n");
+                            lws_callback_on_writable(websocket_connection);
                             
-                            // Trigger WebSocket writeable callback
-                            if (websocket_connection) {
-                                lws_callback_on_writable(websocket_connection);
+                            // More aggressive servicing to ensure immediate sending
+                            for (int i = 0; i < 10; i++) {
                                 lws_service(websocket_context, 0);
+                                usleep(1000); // 1ms delay between service calls
                             }
+                        } else {
+                            printf("❌ WebSocket connection is NULL!\n");
                         }
-                        
-                        free(base64_audio);
+                    } else {
+                        printf("❌ Failed to add binary message to queue\n");
                     }
+                    
                     free(audio_data);
+                } else {
+                    printf("❌ Failed to get recorded audio\n");
                 }
             } else {
                 printf("❌ Failed to stop recording\n");
@@ -100,20 +105,19 @@ void* input_thread(void *arg) {
         if (add_message_to_queue(input_buffer)) {
             get_timestamp(timestamp, sizeof(timestamp));
             printf("[%s] You: %s\n", timestamp, input_buffer);
-            printf("🔍 DEBUG: Message added to queue successfully\n");
             printf("> ");
             fflush(stdout);
             
             // Trigger WebSocket writeable callback to send the message
             if (websocket_connection) {
-                printf("🔍 DEBUG: Triggering WebSocket writeable callback\n");
                 lws_callback_on_writable(websocket_connection);
                 
                 // Also try to service the context to process the callback
-                printf("🔍 DEBUG: Servicing WebSocket context\n");
                 lws_service(websocket_context, 0);
+                // Additional service call to ensure immediate processing
+                lws_service(websocket_context, 50);
             } else {
-                printf("❌ DEBUG: WebSocket connection is NULL!\n");
+                printf("❌ WebSocket connection is NULL!\n");
             }
         } else {
             printf("❌ Message queue is full, please wait...\n> ");
