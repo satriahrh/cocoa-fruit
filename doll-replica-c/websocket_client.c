@@ -2,10 +2,12 @@
 #include "config.h"
 #include "utils.h"
 #include "message_queue.h"
+#include "audio.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <cjson/cJSON.h>
 
 // Global WebSocket variables
 struct lws *websocket_connection = NULL;
@@ -124,7 +126,36 @@ int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         case LWS_CALLBACK_CLIENT_RECEIVE: {
             char timestamp[16];
             get_timestamp(timestamp, sizeof(timestamp));
-            printf("[%s] Server: %.*s\n", timestamp, (int)len, (char *)in);
+            
+            // Try to parse as JSON first
+            cJSON *json = cJSON_Parse((char *)in);
+            if (json) {
+                // Check if it's an audio message
+                cJSON *audio_data = cJSON_GetObjectItem(json, "audio");
+                cJSON *text_data = cJSON_GetObjectItem(json, "text");
+                
+                if (audio_data && audio_data->valuestring) {
+                    printf("[%s] Server: [AUDIO MESSAGE]\n", timestamp);
+                    printf("🔊 Playing audio response...\n");
+                    
+                    // Play the audio
+                    if (play_audio_from_base64(audio_data->valuestring)) {
+                        printf("✅ Audio played successfully\n");
+                    } else {
+                        printf("❌ Failed to play audio\n");
+                    }
+                }
+                
+                if (text_data && text_data->valuestring) {
+                    printf("[%s] Server: %s\n", timestamp, text_data->valuestring);
+                }
+                
+                cJSON_Delete(json);
+            } else {
+                // Fallback to plain text
+                printf("[%s] Server: %.*s\n", timestamp, (int)len, (char *)in);
+            }
+            
             printf("> ");
             fflush(stdout);
             break;

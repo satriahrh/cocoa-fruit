@@ -8,6 +8,7 @@
 #include "websocket_client.h"
 #include "message_queue.h"
 #include "input_handler.h"
+#include "audio.h"
 
 int main(void) {
     printf("🚀 Starting C WebSocket client...\n");
@@ -21,9 +22,17 @@ int main(void) {
     // Initialize message queue
     init_message_queue();
     
+    // Initialize audio system
+    if (!init_audio()) {
+        printf("❌ Failed to initialize audio system\n");
+        cleanup_message_queue();
+        return 1;
+    }
+    
     // Initialize WebSocket client
     if (!init_websocket_client()) {
         printf("❌ Failed to initialize WebSocket client\n");
+        cleanup_audio();
         cleanup_message_queue();
         return 1;
     }
@@ -77,6 +86,7 @@ int main(void) {
     // Final cleanup
     cleanup_websocket_client();
     cleanup_message_queue();
+    cleanup_audio();
     
     return 0;
 }
