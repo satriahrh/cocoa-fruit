@@ -46,12 +46,20 @@ void* input_thread(void *arg) {
         if (add_message_to_queue(input_buffer)) {
             get_timestamp(timestamp, sizeof(timestamp));
             printf("[%s] You: %s\n", timestamp, input_buffer);
+            printf("🔍 DEBUG: Message added to queue successfully\n");
             printf("> ");
             fflush(stdout);
             
             // Trigger WebSocket writeable callback to send the message
             if (websocket_connection) {
+                printf("🔍 DEBUG: Triggering WebSocket writeable callback\n");
                 lws_callback_on_writable(websocket_connection);
+                
+                // Also try to service the context to process the callback
+                printf("🔍 DEBUG: Servicing WebSocket context\n");
+                lws_service(websocket_context, 0);
+            } else {
+                printf("❌ DEBUG: WebSocket connection is NULL!\n");
             }
         } else {
             printf("❌ Message queue is full, please wait...\n> ");

@@ -87,29 +87,36 @@ int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
             lws_sul_schedule(websocket_context, 0, &ping_timer, send_ping, PING_INTERVAL_SECONDS * LWS_US_PER_SEC);
             
             // Send initial greeting message
+            printf("🔍 DEBUG: Connection established, scheduling writeable callback\n");
             lws_callback_on_writable(wsi);
             break;
             
         case LWS_CALLBACK_CLIENT_WRITEABLE: {
+            printf("🔍 DEBUG: Writeable callback triggered\n");
             // Send queued messages
             char message_to_send[MAX_MESSAGE_LENGTH];
             int message_length;
             
             if (get_message_from_queue(message_to_send, &message_length)) {
+                printf("🔍 DEBUG: Sending message: '%s' (length: %d)\n", message_to_send, message_length);
+                
                 unsigned char message_buffer[LWS_PRE + MAX_MESSAGE_LENGTH];
                 memcpy(&message_buffer[LWS_PRE], message_to_send, message_length);
                 
                 int result = lws_write(wsi, &message_buffer[LWS_PRE], message_length, LWS_WRITE_TEXT);
                 if (result >= 0) {
-                    // Message sent successfully
+                    printf("✅ DEBUG: Message sent successfully (%d bytes)\n", result);
                 } else {
-                    printf("❌ Failed to send message\n");
+                    printf("❌ Failed to send message (error: %d)\n", result);
                 }
                 
                 // If there are more messages in queue, schedule another write
                 if (queue_head != queue_tail) {
+                    printf("🔍 DEBUG: More messages in queue, scheduling another write\n");
                     lws_callback_on_writable(wsi);
                 }
+            } else {
+                printf("🔍 DEBUG: No messages in queue to send\n");
             }
             break;
         }

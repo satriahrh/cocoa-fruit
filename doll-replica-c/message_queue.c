@@ -1,5 +1,6 @@
 #include "message_queue.h"
 #include <string.h>
+#include <stdio.h>
 
 // Global queue variables
 queued_message_t message_queue[MAX_QUEUE_SIZE];
@@ -25,6 +26,7 @@ int add_message_to_queue(const char *message) {
     
     int next_tail = (queue_tail + 1) % MAX_QUEUE_SIZE;
     if (next_tail == queue_head) {
+        printf("🔍 DEBUG: Queue is full, cannot add message\n");
         pthread_mutex_unlock(&queue_mutex);
         return 0; // Queue is full
     }
@@ -33,6 +35,9 @@ int add_message_to_queue(const char *message) {
     message_queue[queue_tail].message[MAX_MESSAGE_LENGTH - 1] = '\0';
     message_queue[queue_tail].length = strlen(message_queue[queue_tail].message);
     queue_tail = next_tail;
+    
+    printf("🔍 DEBUG: Message added to queue at position %d: '%s'\n", (queue_tail - 1 + MAX_QUEUE_SIZE) % MAX_QUEUE_SIZE, message);
+    printf("🔍 DEBUG: Queue head: %d, tail: %d\n", queue_head, queue_tail);
     
     pthread_mutex_unlock(&queue_mutex);
     return 1; // Success
@@ -43,6 +48,7 @@ int get_message_from_queue(char *message, int *length) {
     pthread_mutex_lock(&queue_mutex);
     
     if (queue_head == queue_tail) {
+        printf("🔍 DEBUG: Queue is empty, no messages to get\n");
         pthread_mutex_unlock(&queue_mutex);
         return 0; // Queue is empty
     }
@@ -50,6 +56,9 @@ int get_message_from_queue(char *message, int *length) {
     strcpy(message, message_queue[queue_head].message);
     *length = message_queue[queue_head].length;
     queue_head = (queue_head + 1) % MAX_QUEUE_SIZE;
+    
+    printf("🔍 DEBUG: Message retrieved from queue at position %d: '%s'\n", (queue_head - 1 + MAX_QUEUE_SIZE) % MAX_QUEUE_SIZE, message);
+    printf("🔍 DEBUG: Queue head: %d, tail: %d\n", queue_head, queue_tail);
     
     pthread_mutex_unlock(&queue_mutex);
     return 1; // Success
