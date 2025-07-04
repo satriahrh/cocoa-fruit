@@ -5,9 +5,11 @@ go 1.23.1
 require (
 	cloud.google.com/go/speech v1.27.1
 	cloud.google.com/go/texttospeech v1.13.0
+	github.com/golang-jwt/jwt/v5 v5.2.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/labstack/echo/v4 v4.13.3
 	github.com/subosito/gotenv v1.6.0
+	go.uber.org/zap v1.27.0
 	google.golang.org/genai v1.3.0
 )
 
@@ -36,7 +38,6 @@ require (
 	go.opentelemetry.io/otel/metric v1.35.0 // indirect
 	go.opentelemetry.io/otel/trace v1.35.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/crypto v0.37.0 // indirect
 	golang.org/x/net v0.39.0 // indirect
 	golang.org/x/oauth2 v0.29.0 // indirect

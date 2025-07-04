@@ -4,6 +4,7 @@
 #include "utils.h"
 #include "websocket_client.h"
 #include "audio.h"
+#include "http_client.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -46,8 +47,10 @@ void* input_thread(void *arg) {
         
         // Handle recording commands
         if (strcmp(input_buffer, "record") == 0) {
+            // Start recording without streaming (collect all audio first)
             if (start_recording()) {
                 printf("🎤 Recording started! Say something and type 'stop' to end recording.\n");
+                printf("📤 Audio will be sent as a single request when recording stops...\n");
             } else {
                 printf("❌ Failed to start recording\n");
             }
@@ -58,40 +61,26 @@ void* input_thread(void *arg) {
         
         if (strcmp(input_buffer, "stop") == 0) {
             if (stop_recording()) {
-                printf("⏹️  Recording stopped. Processing audio...\n");
+                printf("⏹️  Recording stopped.\n");
                 
-                // Get recorded audio and send it
-                unsigned char *audio_data;
-                size_t audio_size;
+                // Get the recorded audio data
+                unsigned char *audio_data = NULL;
+                size_t audio_size = 0;
+                
                 if (get_recorded_audio(&audio_data, &audio_size)) {
-                    printf("🔍 DEBUG: Got recorded audio, size: %zu bytes\n", audio_size);
+                    printf("📤 Sending %zu bytes of audio data...\n", audio_size);
                     
-                    // Send raw binary audio data directly
-                    if (add_binary_message_to_queue(audio_data, audio_size)) {
-                        printf("🔍 DEBUG: Binary message added to queue successfully\n");
-                        get_timestamp(timestamp, sizeof(timestamp));
-                        printf("[%s] You: [BINARY AUDIO] (%zu bytes)\n", timestamp, audio_size);
-                        
-                        // Trigger WebSocket writeable callback
-                        if (websocket_connection) {
-                            printf("🔍 DEBUG: Triggering WebSocket writeable callback\n");
-                            lws_callback_on_writable(websocket_connection);
-                            
-                            // More aggressive servicing to ensure immediate sending
-                            for (int i = 0; i < 10; i++) {
-                                lws_service(websocket_context, 0);
-                                usleep(1000); // 1ms delay between service calls
-                            }
-                        } else {
-                            printf("❌ WebSocket connection is NULL!\n");
-                        }
+                    // Send audio data as a single request
+                    if (http_stream_audio_realtime(current_jwt_token, audio_data, audio_size)) {
+                        printf("✅ Audio sent successfully! Transcription will be sent via WebSocket.\n");
                     } else {
-                        printf("❌ Failed to add binary message to queue\n");
+                        printf("❌ Failed to send audio data\n");
                     }
                     
+                    // Free the audio data
                     free(audio_data);
                 } else {
-                    printf("❌ Failed to get recorded audio\n");
+                    printf("❌ Failed to get recorded audio data\n");
                 }
             } else {
                 printf("❌ Failed to stop recording\n");

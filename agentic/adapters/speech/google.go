@@ -107,26 +107,94 @@ func (g *GoogleSpeech) TranscribeAudio(ctx context.Context, base64Audio string) 
 	return transcript, nil
 }
 
-func (g *GoogleSpeech) TranscribeStreaming(ctx context.Context) error {
+// TranscribeStreaming handles real-time streaming audio transcription
+func (g *GoogleSpeech) TranscribeStreaming(ctx context.Context, audioChunks <-chan []byte) (string, error) {
+	log.WithCtx(ctx).Info("🎤 Starting streaming transcription")
+
 	streamingClient, err := g.client.StreamingRecognize(ctx)
 	if err != nil {
-		return fmt.Errorf("creating streaming client: %w", err)
+		return "", fmt.Errorf("creating streaming client: %w", err)
 	}
+	defer streamingClient.CloseSend()
 
+	// Send streaming configuration
 	err = streamingClient.Send(&speechpb.StreamingRecognizeRequest{
 		StreamingRequest: &speechpb.StreamingRecognizeRequest_StreamingConfig{
 			StreamingConfig: &speechpb.StreamingRecognitionConfig{
 				Config: &speechpb.RecognitionConfig{
-					Encoding:        speechpb.RecognitionConfig_LINEAR16,
-					SampleRateHertz: 16000,
-					LanguageCode:    "id-ID",
+					Encoding:          speechpb.RecognitionConfig_LINEAR16,
+					SampleRateHertz:   16000,
+					LanguageCode:      "id-ID",
+					AudioChannelCount: 1, // Mono
 				},
+				InterimResults: false, // Only get final results
 			},
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("sending streaming config: %w", err)
+		return "", fmt.Errorf("sending streaming config: %w", err)
 	}
 
-	panic("not implemented")
+	log.WithCtx(ctx).Info("✅ Streaming configuration sent successfully")
+
+	// Start goroutine to send audio chunks
+	go func() {
+		defer func() {
+			// Send end-of-stream marker
+			if err := streamingClient.CloseSend(); err != nil {
+				log.WithCtx(ctx).Error("❌ Error closing streaming send", zap.Error(err))
+			}
+		}()
+
+		for {
+			select {
+			case chunk, ok := <-audioChunks:
+				if !ok {
+					log.WithCtx(ctx).Info("📤 Audio chunks channel closed, ending stream")
+					return
+				}
+
+				if len(chunk) == 0 {
+					continue
+				}
+
+				// Send audio chunk
+				err := streamingClient.Send(&speechpb.StreamingRecognizeRequest{
+					StreamingRequest: &speechpb.StreamingRecognizeRequest_AudioContent{
+						AudioContent: chunk,
+					},
+				})
+				if err != nil {
+					log.WithCtx(ctx).Error("❌ Error sending audio chunk",
+						zap.Error(err),
+						zap.Int("chunk_size", len(chunk)))
+					return
+				}
+
+				log.WithCtx(ctx).Debug("📤 Sent audio chunk",
+					zap.Int("chunk_size", len(chunk)))
+
+			case <-ctx.Done():
+				log.WithCtx(ctx).Info("📤 Context cancelled, ending audio stream")
+				return
+			}
+		}
+	}()
+
+	resp, err := streamingClient.Recv()
+	if err != nil {
+		return "", fmt.Errorf("receiving streaming response: %w", err)
+	}
+	log.WithCtx(ctx).Info("✅ Streaming transcription completed", zap.Any("resp", resp))
+
+	var transcript string
+	for _, result := range resp.GetResults() {
+		alternatives := result.GetAlternatives()
+		for _, alternative := range alternatives {
+			transcript += alternative.GetTranscript()
+			log.WithCtx(ctx).Info("✅ Transcript", zap.String("transcript", transcript))
+		}
+	}
+
+	return transcript, nil
 }

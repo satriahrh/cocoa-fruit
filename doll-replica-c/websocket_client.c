@@ -3,6 +3,7 @@
 #include "utils.h"
 #include "message_queue.h"
 #include "audio.h"
+#include "http_client.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -48,9 +49,10 @@ static void send_ping(lws_sorted_usec_list_t *timer) {
     // Ping sent successfully - no need to display it
 
     // Schedule next ping in PING_INTERVAL_SECONDS
-    if (!should_exit && websocket_connection) {
-        lws_sul_schedule(websocket_context, 0, timer, send_ping, PING_INTERVAL_SECONDS * LWS_US_PER_SEC);
-    }
+    // Disabled to avoid segmentation fault
+    // if (!should_exit && websocket_connection) {
+    //     lws_sul_schedule(websocket_context, 0, timer, send_ping, PING_INTERVAL_SECONDS * LWS_US_PER_SEC);
+    // }
 }
 
 // WebSocket callback function - handles all WebSocket events
@@ -58,19 +60,11 @@ int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
                       void *user, void *in, size_t len) {
     switch (reason) {
         case LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER: {
-            // Add Basic Authentication header
-            char credentials[256];
-            char encoded_auth[512];
-            char auth_header[512];
+            // Add JWT Authentication header
+            char auth_header[1024];
             
-            // Create "username:password" string
-            snprintf(credentials, sizeof(credentials), "%s:%s", AUTH_USERNAME, AUTH_PASSWORD);
-            
-            // Encode to base64
-            encode_base64(credentials, encoded_auth);
-            
-            // Create "Basic <base64>" header
-            snprintf(auth_header, sizeof(auth_header), "Basic %s", encoded_auth);
+            // Create "Bearer <jwt-token>" header
+            snprintf(auth_header, sizeof(auth_header), "Bearer %s", current_jwt_token);
             
             // Add the header to the request
             unsigned char **header_ptr = (unsigned char **)in;
@@ -90,8 +84,8 @@ int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
             printf("✅ Connected to WebSocket server!\n");
             websocket_connection = wsi;
             
-            // Start sending ping messages every PING_INTERVAL_SECONDS
-            lws_sul_schedule(websocket_context, 0, &ping_timer, send_ping, PING_INTERVAL_SECONDS * LWS_US_PER_SEC);
+            // Disable ping for now to avoid segmentation fault
+            // lws_sul_schedule(websocket_context, 0, &ping_timer, send_ping, PING_INTERVAL_SECONDS * LWS_US_PER_SEC);
             
             // Send initial greeting message
             lws_callback_on_writable(wsi);
@@ -169,8 +163,44 @@ int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
                 incoming_buffer[0] = '\0';
             }
 
-            // Display the raw text response from server
-            printf("[%s] Server: %s\n", timestamp, incoming_buffer);
+            // Debug: Print the raw WebSocket message
+            printf("[%s] 🔍 DEBUG: Raw WebSocket message: %s\n", timestamp, incoming_buffer);
+
+            // Try to parse as JSON transcription message
+            if (strstr(incoming_buffer, "\"type\":\"transcription\"") != NULL) {
+                // Parse transcription message
+                char *text_start = strstr(incoming_buffer, "\"text\":\"");
+                char *session_start = strstr(incoming_buffer, "\"session_id\":\"");
+                
+                if (text_start && session_start) {
+                    text_start += 8; // Skip "text":"
+                    session_start += 14; // Skip "session_id":"
+                    
+                    char *text_end = strchr(text_start, '"');
+                    char *session_end = strchr(session_start, '"');
+                    
+                    if (text_end && session_end) {
+                        char session_id[64] = {0};
+                        char transcription_text[1024] = {0};
+                        
+                        size_t session_len = session_end - session_start;
+                        size_t text_len = text_end - text_start;
+                        
+                        if (session_len < sizeof(session_id) && text_len < sizeof(transcription_text)) {
+                            strncpy(session_id, session_start, session_len);
+                            strncpy(transcription_text, text_start, text_len);
+                            
+                            printf("[%s] 🎤 Transcription (Session: %s): %s\n", 
+                                   timestamp, session_id, transcription_text);
+                        }
+                    }
+                } else {
+                    printf("[%s] Server: %s\n", timestamp, incoming_buffer);
+                }
+            } else {
+                // Display the raw text response from server
+                printf("[%s] Server: %s\n", timestamp, incoming_buffer);
+            }
             
             // Clear buffer after processing
             incoming_buffer_len = 0;

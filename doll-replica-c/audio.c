@@ -15,6 +15,9 @@ static size_t recording_buffer_size = 0;
 static size_t recording_buffer_used = 0;
 static size_t max_recording_size;
 
+// Streaming callback
+static audio_chunk_callback streaming_callback = NULL;
+
 // Base64 decoding table (same as in utils.c)
 static const char base64_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -31,6 +34,13 @@ static int recording_callback(const void *inputBuffer, void *outputBuffer,
     
     if (inputBuffer && recording_active) {
         size_t bytes_to_write = framesPerBuffer * CHANNELS * 2; // 2 bytes per sample
+        
+        // If streaming callback is set, send chunk immediately
+        if (streaming_callback) {
+            streaming_callback((const unsigned char *)inputBuffer, bytes_to_write);
+        }
+        
+        // Also buffer for traditional recording
         if (recording_buffer_used + bytes_to_write <= max_recording_size) {
             memcpy(recording_buffer + recording_buffer_used, inputBuffer, bytes_to_write);
             recording_buffer_used += bytes_to_write;
@@ -139,6 +149,11 @@ void cleanup_audio(void) {
 
 // Start recording audio
 int start_recording(void) {
+    return start_recording_with_streaming(NULL);
+}
+
+// Start recording with streaming callback
+int start_recording_with_streaming(audio_chunk_callback callback) {
     if (!audio_initialized) {
         printf("❌ Audio system not initialized\n");
         return 0;
@@ -174,9 +189,15 @@ int start_recording(void) {
     // Reset recording buffer
     recording_buffer_used = 0;
     recording_active = 1;
+    streaming_callback = callback;
     
     printf("🎤 Started recording...\n");
     return 1;
+}
+
+// Check if recording is active
+int is_recording_active(void) {
+    return recording_active;
 }
 
 // Stop recording audio
@@ -200,6 +221,7 @@ int stop_recording(void) {
     
     recording_stream = NULL;
     recording_active = 0;
+    streaming_callback = NULL;
     
     printf("⏹️  Recording stopped (%zu bytes captured)\n", recording_buffer_used);
     return 1;

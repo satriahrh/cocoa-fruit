@@ -32,3 +32,7 @@ func NewServer(svc *usecase.ChatService, googleTTS *tts.GoogleTTS, googleSpeech 
 func (s *Server) RunWebsocketHub() {
 	s.hub.Run()
 }
+
+func (s *Server) GetHub() *Hub {
+	return s.hub
+}

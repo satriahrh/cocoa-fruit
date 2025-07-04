@@ -2,6 +2,10 @@
 #define INPUT_HANDLER_H
 
 #include <pthread.h>
+#include <stddef.h>
+
+// Audio chunk callback function declaration
+void handle_audio_chunk(const unsigned char *chunk, size_t chunk_size);
 
 // Input handler functions
 int start_input_thread(void);
