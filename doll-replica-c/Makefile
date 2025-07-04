@@ -5,13 +5,13 @@ CFLAGS := -I$(OPENSSL_PREFIX)/include -I$(PORTAUDIO_PREFIX)/include -I$(CJSON_PR
 LDFLAGS := -L$(OPENSSL_PREFIX)/lib -L$(PORTAUDIO_PREFIX)/lib -L$(CJSON_PREFIX)/lib $(shell pkg-config --libs libwebsockets) -lssl -lcrypto -pthread -lportaudio -lcjson
 
 # Source files
-SOURCES := main.c utils.c message_queue.c websocket_client.c input_handler.c audio.c
+SOURCES := main.c utils.c message_queue.c websocket_client.c input_handler.c audio.c http_client.c
 OBJECTS := $(SOURCES:.c=.o)
 
 # Default target
 all: build
 
-# Build the WebSocket client
+# Build the WebSocket client with HTTP audio streaming
 build: $(OBJECTS)
 	@gcc $(OBJECTS) -o doll-replica-c $(LDFLAGS) -lcjson
 	@echo "✅ Build successful! Run with: ./doll-replica-c"
@@ -33,7 +33,7 @@ install-deps:
 
 # Run the client
 run: build
-	@echo "🚀 Starting WebSocket client..."
+	@echo "🚀 Starting client with HTTP audio streaming..."
 	@./doll-replica-c
 
 .PHONY: all build clean install-deps run
