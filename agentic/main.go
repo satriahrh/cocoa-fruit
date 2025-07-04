@@ -7,6 +7,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/satriahrh/cocoa-fruit/agentic/adapters/http"
 	"github.com/satriahrh/cocoa-fruit/agentic/adapters/llm"
+	"github.com/satriahrh/cocoa-fruit/agentic/adapters/message_broker"
 	"github.com/satriahrh/cocoa-fruit/agentic/adapters/speech"
 	"github.com/satriahrh/cocoa-fruit/agentic/adapters/tts"
 	"github.com/satriahrh/cocoa-fruit/agentic/adapters/websocket"
@@ -17,16 +18,22 @@ import (
 func main() {
 	gotenv.Load()
 
+	// Initialize message broker (channel-based for now)
+	messageBroker := message_broker.NewChannelMessageBroker()
+	defer messageBroker.Close()
+
+	// Initialize services
 	geminiLlm := llm.NewGeminiClient()
 	svc := usecase.NewChatService(geminiLlm)
 	googleTTS := tts.NewGoogleTTS()
 	googleSpeech := speech.NewGoogleSpeech()
 
-	server := websocket.NewServer(svc, googleTTS, googleSpeech)
+	// Initialize WebSocket server with message broker
+	server := websocket.NewServer(svc, googleTTS, googleSpeech, messageBroker)
 	go server.RunWebsocketHub()
 
-	// Create HTTP audio handler with WebSocket hub
-	audioHandler := http.NewAudioHandler(svc, googleSpeech, server.GetHub())
+	// Create HTTP audio handler with message broker
+	audioHandler := http.NewAudioHandler(svc, googleSpeech, messageBroker, server.GetHub())
 
 	e := echo.New()
 
@@ -82,5 +89,7 @@ func main() {
 	log.Println("  POST /api/v1/auth/token          - Get JWT token")
 	log.Println("  POST /api/v1/audio/stream        - Stream audio (JWT required)")
 	log.Println("  GET  /ws                         - WebSocket (JWT required)")
+	log.Println("Message broker: Channel-based (single pod)")
+	log.Println("Flow: HTTP -> Message Broker -> WebSocket")
 	log.Fatal(e.Start(":8080"))
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/satriahrh/cocoa-fruit/agentic/adapters/speech"
 	"github.com/satriahrh/cocoa-fruit/agentic/adapters/websocket"
+	"github.com/satriahrh/cocoa-fruit/agentic/domain"
 	"github.com/satriahrh/cocoa-fruit/agentic/usecase"
 )
 
@@ -30,11 +31,15 @@ const (
 	// Audio settings
 	MaxAudioDuration = 60 * time.Second
 	SupportedFormats = "wav,mp3,flac,m4a"
+
+	// Message broker settings
+	TranscriptionTopic = "transcription.results"
 )
 
 type AudioHandler struct {
 	chatService   *usecase.ChatService
 	speechService *speech.GoogleSpeech
+	messageBroker domain.MessageBroker
 	wsHub         *websocket.Hub
 	jwtSecret     []byte
 }
@@ -61,10 +66,11 @@ type JWTClaims struct {
 	jwt.RegisteredClaims
 }
 
-func NewAudioHandler(chatService *usecase.ChatService, speechService *speech.GoogleSpeech, wsHub *websocket.Hub) *AudioHandler {
+func NewAudioHandler(chatService *usecase.ChatService, speechService *speech.GoogleSpeech, messageBroker domain.MessageBroker, wsHub *websocket.Hub) *AudioHandler {
 	return &AudioHandler{
 		chatService:   chatService,
 		speechService: speechService,
+		messageBroker: messageBroker,
 		wsHub:         wsHub,
 		jwtSecret:     []byte(JWTSecretKey),
 	}
@@ -261,10 +267,37 @@ func (h *AudioHandler) StreamAudio(c echo.Context) error {
 
 	log.Printf("Completed audio stream for session %s over %v", sessionID, time.Since(time.Now()))
 
+	// Publish transcription result to message broker
+	transcriptionMsg := domain.TranscriptionMessage{
+		SessionID: sessionID,
+		UserID:    userID,
+		DeviceID:  deviceID,
+		Text:      transcription,
+		Success:   true,
+		Timestamp: startTime,
+	}
+
+	// Convert to JSON
+	payload, err := json.Marshal(transcriptionMsg)
+	if err != nil {
+		log.Printf("Error marshaling transcription message: %v", err)
+	} else {
+		// Publish to message broker with sessionID as routing key
+		err = h.messageBroker.Publish(ctx, TranscriptionTopic, sessionID, payload)
+		if err != nil {
+			log.Printf("Error publishing transcription result: %v", err)
+			// Don't fail the request, just log the error
+		}
+	}
+	if err != nil {
+		log.Printf("Error publishing transcription result: %v", err)
+		// Don't fail the request, just log the error
+	}
+
 	// Send transcription result via WebSocket if available
 	if h.wsHub != nil {
-		// Create transcription message
-		transcriptionMsg := map[string]interface{}{
+		// Create transcription message for WebSocket
+		wsTranscriptionMsg := map[string]interface{}{
 			"type":       "transcription",
 			"session_id": sessionID,
 			"user_id":    userID,
@@ -274,7 +307,7 @@ func (h *AudioHandler) StreamAudio(c echo.Context) error {
 		}
 
 		// Convert to JSON
-		jsonData, err := json.Marshal(transcriptionMsg)
+		jsonData, err := json.Marshal(wsTranscriptionMsg)
 		if err != nil {
 			log.Printf("Error marshaling transcription message: %v", err)
 		} else {
