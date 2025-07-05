@@ -111,16 +111,25 @@ messageBroker.Publish(ctx, "transcription.results", sessionID, payload)
 
 ### WebSocket Subscription
 
-The WebSocket server subscribes to transcription messages and broadcasts to clients:
+The WebSocket server subscribes to transcription messages and routes to specific devices:
 
 ```go
 // WebSocket server subscribes to broker
 messageChan, _ := messageBroker.Subscribe(ctx, "transcription.results", "")
 for msg := range messageChan {
-    // Broadcast to all WebSocket clients
-    hub.Broadcast(msg.Payload)
+    // Route transcription to specific device only
+    err := hub.SendToDevice(transcriptionMsg.DeviceID, jsonData)
+    if err != nil {
+        // Device not connected, ignore message
+        log.Warn("Device not connected, ignoring transcription")
+    }
 }
 ```
+
+**Connection Management:**
+- One WebSocket connection per device ID
+- Duplicate connections rejected with HTTP 409
+- Automatic cleanup on connection close
 
 ### WebSocket Message Format
 
@@ -159,7 +168,8 @@ Clients receive real-time transcription updates:
 ### Message Broker Settings
 
 - **Topic**: `transcription.results`
-- **Routing Key**: Session ID (for session-specific routing)
+- **Routing Key**: Session ID (for audio stream tracking)
+- **Device Routing**: WebSocket messages routed by deviceID
 - **Buffer Size**: 100 messages per channel
 
 ## Error Handling

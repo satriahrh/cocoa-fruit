@@ -1,6 +1,8 @@
 package websocket
 
 import (
+	"fmt"
+
 	"github.com/satriahrh/cocoa-fruit/agentic/utils/log"
 )
 
@@ -58,6 +60,31 @@ func (h *Hub) Broadcast(message []byte) {
 			client.SendMessage(message)
 		}
 	}
+}
+
+// SendToDevice sends a message to a specific client by device ID
+func (h *Hub) SendToDevice(deviceID string, message []byte) error {
+	for client := range h.clients {
+		if client.deviceID == deviceID && !client.IsClosed() {
+			return client.SendMessage(message)
+		}
+	}
+	return fmt.Errorf("client with device ID %s not found", deviceID)
+}
+
+// GetClientByDevice returns a client by device ID
+func (h *Hub) GetClientByDevice(deviceID string) *Client {
+	for client := range h.clients {
+		if client.deviceID == deviceID && !client.IsClosed() {
+			return client
+		}
+	}
+	return nil
+}
+
+// IsDeviceConnected checks if a device is already connected
+func (h *Hub) IsDeviceConnected(deviceID string) bool {
+	return h.GetClientByDevice(deviceID) != nil
 }
 
 // ClientCount returns the number of connected clients

@@ -95,11 +95,20 @@ func (s *Server) startTranscriptionListener() {
 				continue
 			}
 
-			// Broadcast to all WebSocket clients
-			s.hub.Broadcast(jsonData)
-			log.WithCtx(ctx).Info("📤 Broadcasted transcription to WebSocket clients",
-				zap.String("session_id", transcriptionMsg.SessionID),
-				zap.String("text", transcriptionMsg.Text))
+			// Try to send to specific device, ignore if not found
+			err = s.hub.SendToDevice(transcriptionMsg.DeviceID, jsonData)
+			if err != nil {
+				// Device not found, log and ignore (no broadcast)
+				log.WithCtx(ctx).Warn("⚠️ Device not connected, ignoring transcription",
+					zap.String("device_id", transcriptionMsg.DeviceID),
+					zap.String("session_id", transcriptionMsg.SessionID),
+					zap.String("text", transcriptionMsg.Text))
+			} else {
+				log.WithCtx(ctx).Info("📤 Sent transcription to specific device",
+					zap.String("device_id", transcriptionMsg.DeviceID),
+					zap.String("session_id", transcriptionMsg.SessionID),
+					zap.String("text", transcriptionMsg.Text))
+			}
 
 		case <-ctx.Done():
 			log.WithCtx(ctx).Info("🔒 Transcription listener stopped")

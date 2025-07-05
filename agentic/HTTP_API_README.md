@@ -121,9 +121,13 @@ The transcription result is automatically published to the message broker with:
 
 **Endpoint:** `GET /ws`
 
-**Description:** WebSocket connection for real-time communication. Subscribes to message broker.
+**Description:** WebSocket connection for real-time communication. One connection per device only.
 
 **Authentication:** JWT token required (same as HTTP endpoints)
+
+**Connection Limits:** 
+- One WebSocket connection per device ID
+- Duplicate connections will be rejected with HTTP 409
 
 **Headers:**
 ```
@@ -133,6 +137,13 @@ Authorization: Bearer <jwt-token>
 **Or Query Parameter:**
 ```
 ws://localhost:8080/ws?token=<jwt-token>
+```
+
+**Error Response (409 Conflict):**
+```json
+{
+  "message": "Device already connected"
+}
 ```
 
 **Message Format:**
@@ -170,11 +181,14 @@ type MessageBroker interface {
    messageBroker.Publish(ctx, "transcription.results", sessionID, payload)
    ```
 
-2. **WebSocket Server** subscribes and broadcasts:
+2. **WebSocket Server** subscribes and routes by device:
    ```go
    messageChan, _ := messageBroker.Subscribe(ctx, "transcription.results", "")
-   hub.Broadcast(msg.Payload)
+   // Route transcription to specific device only
+   hub.SendToDevice(transcriptionMsg.DeviceID, jsonData)
    ```
+
+3. **Device-based Routing**: Messages are sent only to the specific device that initiated the audio stream
 
 ### Future Migration
 
@@ -228,6 +242,13 @@ Easy migration to external brokers (RabbitMQ, Redis, etc.) by implementing the s
 ```json
 {
   "message": "Request entity too large"
+}
+```
+
+### 409 Conflict
+```json
+{
+  "message": "Device already connected"
 }
 ```
 

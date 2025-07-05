@@ -76,6 +76,15 @@ func (s *Server) Handler(c echo.Context) error {
 	deviceID := c.Get("device_id").(string)
 	deviceVersion := c.Get("device_version").(string)
 
+	// Check if device is already connected
+	if s.hub.IsDeviceConnected(deviceID) {
+		log.WithCtx(c.Request().Context()).Warn("⚠️ Device already connected, rejecting duplicate connection",
+			zap.String("device_id", deviceID),
+			zap.String("remote_addr", c.Request().RemoteAddr))
+		conn.Close()
+		return echo.NewHTTPError(409, "Device already connected")
+	}
+
 	log.WithCtx(c.Request().Context()).Info("🔗 New doll connected",
 		zap.Int("user_id", userID),
 		zap.String("device_id", deviceID),
