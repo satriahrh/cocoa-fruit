@@ -74,31 +74,33 @@ func (s *Server) Handler(c echo.Context) error {
 ### Transcription Message Flow
 
 ```
-1. HTTP Audio Stream → Message Broker
+1. HTTP Audio Stream → Message Broker (with sessionID routing key)
    ↓
-2. WebSocket Server subscribes to broker
+2. WebSocket Server subscribes to broker (wildcard subscription)
    ↓
-3. Transcription message received
+3. Message Broker forwards message to wildcard subscriber
    ↓
-4. Extract deviceID from message
+4. Transcription message received
    ↓
-5. Route to specific device
+5. Extract deviceID from message
    ↓
-6. If device not found: ignore message
+6. Route to specific device
+   ↓
+7. If device not found: ignore message
 ```
 
 ### Routing Implementation
 
 ```go
 func (s *Server) startTranscriptionListener() {
+    // Subscribe to all transcription messages (wildcard subscription)
+    messageChan, _ := s.messageBroker.Subscribe(ctx, "transcription.results", "")
+    
     for msg := range messageChan {
-        // Try to send to specific device
-        err := s.hub.SendToDevice(transcriptionMsg.DeviceID, jsonData)
-        if err != nil {
-            // Device not connected, ignore message
-            log.Warn("Device not connected, ignoring transcription")
-        } else {
-            log.Info("Sent transcription to specific device")
+        // Extract deviceID and send to chat service
+        client := s.hub.GetClientByDevice(transcriptionMsg.DeviceID)
+        if client != nil {
+            client.SendInput(transcriptionMsg.Text)
         }
     }
 }

@@ -228,6 +228,18 @@ func (s *Server) startTranscriptionListener() {
 - **Routing Key**: Session ID (e.g., `a1b2c3d4e5f6g7h8`)
 - **Purpose**: Enable session-specific message routing
 
+### Current Wildcard Support
+
+The channel-based message broker now supports wildcard subscriptions:
+
+```go
+// Subscribe to all messages for a topic (wildcard)
+messageChan, err := messageBroker.Subscribe(ctx, "transcription.results", "")
+
+// Subscribe to specific routing key
+messageChan, err := messageBroker.Subscribe(ctx, "transcription.results", sessionID)
+```
+
 ### Future RabbitMQ Patterns
 
 ```go

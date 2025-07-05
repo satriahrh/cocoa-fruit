@@ -28,6 +28,8 @@ type Client struct {
 	deviceVersion string
 	chatService   *usecase.ChatService
 	googleSpeech  *speech.GoogleSpeech
+	inputChan     chan string
+	outputChan    chan string
 }
 
 // Message types following your integration platform patterns
@@ -105,12 +107,20 @@ func NewClient(conn *websocket.Conn, userID int, deviceID, deviceVersion string,
 		deviceVersion: deviceVersion,
 		chatService:   chatService,
 		googleSpeech:  googleSpeech,
+		inputChan:     make(chan string, 10),
+		outputChan:    make(chan string, 10),
 	}
 }
 
 func (c *Client) Run() {
 	// Set up WebSocket handlers
 	c.setupHandlers()
+
+	// Start chat service
+	go c.startChatService()
+
+	// Start response handler
+	go c.handleChatResponses()
 
 	// Start the goroutines
 	go c.Ping()
@@ -186,6 +196,42 @@ func (c *Client) Context() context.Context {
 	return c.ctx
 }
 
+// startChatService starts the chat service for this client
+func (c *Client) startChatService() {
+	if err := c.chatService.Execute(c.ctx, c.userID, c.inputChan, c.outputChan); err != nil {
+		log.WithCtx(c.ctx).Error("❌ Chat service error", zap.Error(err))
+	}
+}
+
+// handleChatResponses handles responses from the chat service
+func (c *Client) handleChatResponses() {
+	for {
+		select {
+		case response := <-c.outputChan:
+			if !c.IsClosed() {
+				// Send response back to the doll as raw text
+				if err := c.SendMessage([]byte(response)); err != nil {
+					log.WithCtx(c.ctx).Error("❌ Failed to send response to doll", zap.Error(err))
+				}
+			}
+		case <-c.ctx.Done():
+			return
+		}
+	}
+}
+
+// SendInput sends input to the chat service
+func (c *Client) SendInput(input string) error {
+	select {
+	case c.inputChan <- input:
+		return nil
+	case <-c.ctx.Done():
+		return c.ctx.Err()
+	default:
+		return fmt.Errorf("chat service input channel is full")
+	}
+}
+
 func (c *Client) Ping() {
 	for {
 		select {
@@ -224,34 +270,6 @@ func (c *Client) readPump() {
 
 	c.conn.SetReadLimit(maxMessageSize)
 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
-
-	// Create channels for chat service
-	inputChan := make(chan string, 10)
-	outputChan := make(chan string, 10)
-
-	// Start chat service in a goroutine
-	go func() {
-		if err := c.chatService.Execute(c.ctx, c.userID, inputChan, outputChan); err != nil {
-			log.WithCtx(c.ctx).Error("❌ Chat service error", zap.Error(err))
-		}
-	}()
-
-	// Start response handler goroutine
-	go func() {
-		for {
-			select {
-			case response := <-outputChan:
-				if !c.IsClosed() {
-					// Send response back to the doll as raw text
-					if err := c.SendMessage([]byte(response)); err != nil {
-						log.WithCtx(c.ctx).Error("❌ Failed to send response to doll", zap.Error(err))
-					}
-				}
-			case <-c.ctx.Done():
-				return
-			}
-		}
-	}()
 
 	for {
 		if c.IsClosed() {
@@ -318,13 +336,8 @@ func (c *Client) readPump() {
 				zap.Int("user_id", c.ctx.Value("user_id").(int)))
 
 			// Send transcribed text to chat service
-			select {
-			case inputChan <- transcript:
-				// Transcribed text sent to chat service successfully
-			case <-c.ctx.Done():
-				return
-			default:
-				log.WithCtx(c.ctx).Error("❌ Chat service input channel is full")
+			if err := c.SendInput(transcript); err != nil {
+				log.WithCtx(c.ctx).Error("❌ Failed to send transcript to chat service", zap.Error(err))
 			}
 			continue
 		}
@@ -337,13 +350,8 @@ func (c *Client) readPump() {
 			zap.Int("user_id", c.ctx.Value("user_id").(int)))
 
 		// Handle as regular text message
-		select {
-		case inputChan <- string(message):
-			// Message sent to chat service successfully
-		case <-c.ctx.Done():
-			return
-		default:
-			log.WithCtx(c.ctx).Error("❌ Chat service input channel is full")
+		if err := c.SendInput(string(message)); err != nil {
+			log.WithCtx(c.ctx).Error("❌ Failed to send message to chat service", zap.Error(err))
 		}
 	}
 }

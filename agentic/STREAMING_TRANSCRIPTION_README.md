@@ -111,10 +111,10 @@ messageBroker.Publish(ctx, "transcription.results", sessionID, payload)
 
 ### WebSocket Subscription
 
-The WebSocket server subscribes to transcription messages and routes to specific devices:
+The WebSocket server subscribes to transcription messages using wildcard subscription and routes to specific devices:
 
 ```go
-// WebSocket server subscribes to broker
+// WebSocket server subscribes to broker (wildcard subscription)
 messageChan, _ := messageBroker.Subscribe(ctx, "transcription.results", "")
 for msg := range messageChan {
     // Route transcription to specific device only
@@ -130,6 +130,7 @@ for msg := range messageChan {
 - One WebSocket connection per device ID
 - Duplicate connections rejected with HTTP 409
 - Automatic cleanup on connection close
+- Wildcard subscription receives all transcription messages
 
 ### WebSocket Message Format
 

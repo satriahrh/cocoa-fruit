@@ -282,39 +282,21 @@ func (h *AudioHandler) StreamAudio(c echo.Context) error {
 	if err != nil {
 		log.Printf("Error marshaling transcription message: %v", err)
 	} else {
+		log.Printf("📤 Publishing to message broker: topic=%s, routing_key=%s, device_id=%s",
+			TranscriptionTopic, sessionID, deviceID)
+
 		// Publish to message broker with sessionID as routing key
 		err = h.messageBroker.Publish(ctx, TranscriptionTopic, sessionID, payload)
 		if err != nil {
 			log.Printf("Error publishing transcription result: %v", err)
 			// Don't fail the request, just log the error
+		} else {
+			log.Printf("✅ Successfully published to message broker")
 		}
 	}
 	if err != nil {
 		log.Printf("Error publishing transcription result: %v", err)
 		// Don't fail the request, just log the error
-	}
-
-	// Send transcription result via WebSocket if available
-	if h.wsHub != nil {
-		// Create transcription message for WebSocket
-		wsTranscriptionMsg := map[string]interface{}{
-			"type":       "transcription",
-			"session_id": sessionID,
-			"user_id":    userID,
-			"text":       transcription,
-			"timestamp":  startTime,
-			"success":    true,
-		}
-
-		// Convert to JSON
-		jsonData, err := json.Marshal(wsTranscriptionMsg)
-		if err != nil {
-			log.Printf("Error marshaling transcription message: %v", err)
-		} else {
-			// Send via WebSocket hub
-			h.wsHub.Broadcast(jsonData)
-			log.Printf("Sent transcription via WebSocket for session %s: %s", sessionID, transcription)
-		}
 	}
 
 	// Return the transcribed text

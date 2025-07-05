@@ -3,6 +3,7 @@ package message_broker
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -81,6 +82,53 @@ func (b *ChannelMessageBroker) Subscribe(ctx context.Context, topic string, rout
 		return nil, fmt.Errorf("message broker is closed")
 	}
 
+	// If routingKey is empty, create a wildcard subscription channel
+	if routingKey == "" {
+		// Create a new channel for wildcard subscription
+		wildcardChannel := make(chan domain.Message, 100)
+
+		// Start a goroutine to forward all messages for this topic
+		go func() {
+			defer close(wildcardChannel)
+
+			// Create a map to track existing channels for this topic
+			topicChannels := make(map[string]chan domain.Message)
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					// Check for new channels for this topic
+					b.mu.RLock()
+					for key, channel := range b.topics {
+						if strings.HasPrefix(key, topic+":") && topicChannels[key] == nil {
+							topicChannels[key] = channel
+							// Start forwarding from this channel
+							go func(ch chan domain.Message, chKey string) {
+								for msg := range ch {
+									select {
+									case wildcardChannel <- msg:
+									case <-ctx.Done():
+										return
+									}
+								}
+							}(channel, key)
+						}
+					}
+					b.mu.RUnlock()
+
+					// Sleep a bit before checking again
+					time.Sleep(100 * time.Millisecond)
+				}
+			}
+		}()
+
+		log.WithCtx(ctx).Info("📡 Subscribed to topic (wildcard)", zap.String("topic", topic))
+		return wildcardChannel, nil
+	}
+
+	// Regular subscription for specific routing key
 	key := makeKey(topic, routingKey)
 	channel, exists := b.topics[key]
 	if !exists {

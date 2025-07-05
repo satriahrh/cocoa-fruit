@@ -57,7 +57,7 @@ func (s *Server) GetHub() *Hub {
 func (s *Server) startTranscriptionListener() {
 	ctx := context.Background()
 
-	// Subscribe to all transcription messages (using wildcard or empty routing key for now)
+	// Subscribe to all transcription messages (using wildcard subscription)
 	messageChan, err := s.messageBroker.Subscribe(ctx, TranscriptionTopic, "")
 	if err != nil {
 		log.WithCtx(ctx).Error("❌ Failed to subscribe to transcription topic", zap.Error(err))
@@ -77,38 +77,30 @@ func (s *Server) startTranscriptionListener() {
 				continue
 			}
 
-			// Create WebSocket message
-			wsMessage := map[string]interface{}{
-				"type":       "transcription",
-				"session_id": transcriptionMsg.SessionID,
-				"user_id":    transcriptionMsg.UserID,
-				"device_id":  transcriptionMsg.DeviceID,
-				"text":       transcriptionMsg.Text,
-				"timestamp":  transcriptionMsg.Timestamp,
-				"success":    transcriptionMsg.Success,
-			}
-
-			// Convert to JSON
-			jsonData, err := json.Marshal(wsMessage)
-			if err != nil {
-				log.WithCtx(ctx).Error("❌ Failed to marshal WebSocket message", zap.Error(err))
-				continue
-			}
-
-			// Try to send to specific device, ignore if not found
-			err = s.hub.SendToDevice(transcriptionMsg.DeviceID, jsonData)
-			if err != nil {
-				// Device not found, log and ignore (no broadcast)
+			// Get the client by device id
+			client := s.hub.GetClientByDevice(transcriptionMsg.DeviceID)
+			if client == nil {
 				log.WithCtx(ctx).Warn("⚠️ Device not connected, ignoring transcription",
 					zap.String("device_id", transcriptionMsg.DeviceID),
 					zap.String("session_id", transcriptionMsg.SessionID),
 					zap.String("text", transcriptionMsg.Text))
-			} else {
-				log.WithCtx(ctx).Info("📤 Sent transcription to specific device",
+				continue
+			}
+
+			// Send transcription to chat service
+			if err := client.SendInput(transcriptionMsg.Text); err != nil {
+				log.WithCtx(ctx).Error("❌ Failed to send transcription to chat service",
 					zap.String("device_id", transcriptionMsg.DeviceID),
 					zap.String("session_id", transcriptionMsg.SessionID),
-					zap.String("text", transcriptionMsg.Text))
+					zap.String("text", transcriptionMsg.Text),
+					zap.Error(err))
+				continue
 			}
+
+			log.WithCtx(ctx).Info("📤 Sent transcription to chat service",
+				zap.String("device_id", transcriptionMsg.DeviceID),
+				zap.String("session_id", transcriptionMsg.SessionID),
+				zap.String("text", transcriptionMsg.Text))
 
 		case <-ctx.Done():
 			log.WithCtx(ctx).Info("🔒 Transcription listener stopped")
