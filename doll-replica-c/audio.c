@@ -45,20 +45,10 @@ static int recording_callback(const void *inputBuffer, void *outputBuffer,
             memcpy(recording_buffer + recording_buffer_used, inputBuffer, bytes_to_write);
             recording_buffer_used += bytes_to_write;
             
-            // Debug: log every 1000 frames (about every 2 seconds at 16kHz)
-            static int frame_count = 0;
-            frame_count++;
-            if (frame_count % 1000 == 0) {
-                printf("🔍 DEBUG: Recording callback called, captured %zu bytes so far\n", recording_buffer_used);
-            }
         } else {
             // Buffer full, but don't stop recording - just stop capturing
-            printf("🔍 DEBUG: Recording buffer full (%zu bytes), stopping capture but keeping stream active\n", recording_buffer_used);
             // Don't set recording_active = 0 here, just stop capturing
         }
-    } else {
-        printf("🔍 DEBUG: Recording callback called but inputBuffer=%p, recording_active=%d\n", 
-               inputBuffer, recording_active);
     }
     
     return paContinue;
@@ -286,15 +276,11 @@ int play_audio_data(const unsigned char *audio_data, size_t data_size) {
         return 0;
     }
     
-    printf("🔊 Playing audio (%zu bytes)...\n", data_size);
-    
     // Properly parse WAV file to find PCM data
     size_t pcm_offset = 0;
     if (data_size > 12 && 
         audio_data[0] == 'R' && audio_data[1] == 'I' && 
         audio_data[2] == 'F' && audio_data[3] == 'F') {
-        
-        printf("🔍 Found WAV file, searching for PCM data...\n");
         
         // Skip RIFF header (12 bytes)
         pcm_offset = 12;
@@ -308,7 +294,6 @@ int play_audio_data(const unsigned char *audio_data, size_t data_size) {
                 
                 // Found data chunk, skip chunk header (8 bytes)
                 pcm_offset += 8;
-                printf("🔍 Found PCM data at offset %zu (skipped %zu bytes)\n", pcm_offset, pcm_offset);
                 break;
             }
             
@@ -319,7 +304,6 @@ int play_audio_data(const unsigned char *audio_data, size_t data_size) {
                                     (audio_data[pcm_offset + 6] << 16) | 
                                     (audio_data[pcm_offset + 7] << 24);
                 pcm_offset += 8 + chunk_size;
-                printf("🔍 Skipping chunk, size: %u bytes\n", chunk_size);
             } else {
                 break;
             }
@@ -328,15 +312,7 @@ int play_audio_data(const unsigned char *audio_data, size_t data_size) {
         // Update audio data pointer and size
         audio_data += pcm_offset;
         data_size -= pcm_offset;
-        printf("🔍 PCM data size: %zu bytes\n", data_size);
     }
-    
-    // Print first 16 bytes of actual PCM data for debugging
-    printf("🔍 First 16 bytes of PCM data: ");
-    for (int i = 0; i < 16 && i < data_size; i++) {
-        printf("%02X ", audio_data[i]);
-    }
-    printf("\n");
     
     // Ensure data size is a multiple of 2 (16-bit samples)
     if (data_size % 2 != 0) {
@@ -351,38 +327,27 @@ int play_audio_data(const unsigned char *audio_data, size_t data_size) {
     // Write audio data in chunks to avoid buffer underflow
     size_t chunk_size = FRAMES_PER_BUFFER * CHANNELS * 2; // 2 bytes per sample
     size_t offset = 0;
-    int chunks_written = 0;
-    
-    printf("🔍 Chunk size: %zu bytes, Total chunks: %zu\n", chunk_size, (data_size + chunk_size - 1) / chunk_size);
     
     while (offset < data_size) {
         size_t bytes_to_write = (offset + chunk_size > data_size) ? 
                                (data_size - offset) : chunk_size;
         
-        printf("🔍 Writing chunk %d: %zu bytes (offset: %zu)\n", chunks_written + 1, bytes_to_write, offset);
-        
         PaError err = Pa_WriteStream(audio_stream, audio_data + offset, bytes_to_write / 2);
         if (err != paNoError) {
-            printf("❌ Failed to play audio chunk %d: %s\n", chunks_written + 1, Pa_GetErrorText(err));
+            printf("❌ Failed to play audio: %s\n", Pa_GetErrorText(err));
             return 0;
         }
         
         offset += bytes_to_write;
-        chunks_written++;
         
         // Small delay to allow audio to play
         usleep(10000); // 10ms
     }
     
-    printf("🔍 Wrote %d chunks successfully\n", chunks_written);
-    
     // Wait for audio to finish playing
-    printf("🔍 Waiting for audio to finish...\n");
     while (Pa_GetStreamWriteAvailable(audio_stream) < FRAMES_PER_BUFFER) {
         usleep(1000); // 1ms
     }
-    
-    printf("✅ Audio playback completed\n");
     return 1;
 }
 
@@ -423,15 +388,10 @@ int play_audio_from_base64(const char *base64_audio) {
     unsigned char *audio_data;
     size_t audio_size;
     
-    printf("🔍 Decoding base64 audio data...\n");
-    printf("🔍 Base64 input length: %zu\n", strlen(base64_audio));
-    
     if (!decode_base64_audio(base64_audio, &audio_data, &audio_size)) {
         printf("❌ Failed to decode base64 audio\n");
         return 0;
     }
-    
-    printf("🔍 Decoded audio size: %zu bytes\n", audio_size);
     
     int result = play_audio_data(audio_data, audio_size);
     free(audio_data);

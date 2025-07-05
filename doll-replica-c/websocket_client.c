@@ -100,8 +100,6 @@ int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
             
             // Try to get binary message first
             if (get_binary_message_from_queue(&binary_data, &binary_size)) {
-                printf("🔍 DEBUG: Attempting to send binary message of length %zu bytes\n", binary_size);
-                
                 // Allocate buffer dynamically
                 unsigned char *message_buffer = malloc(LWS_PRE + binary_size);
                 if (message_buffer) {
@@ -110,8 +108,6 @@ int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
                     int result = lws_write(wsi, &message_buffer[LWS_PRE], binary_size, LWS_WRITE_BINARY);
                     if (result < 0) {
                         printf("❌ Failed to send binary message (error: %d)\n", result);
-                    } else {
-                        printf("🔍 DEBUG: lws_write returned %d bytes (expected %zu)\n", result, binary_size);
                     }
                     
                     free(message_buffer);
@@ -128,16 +124,12 @@ int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
                 }
             } else if (get_message_from_queue(message_to_send, &message_length)) {
                 // Handle text messages
-                printf("🔍 DEBUG: Attempting to send text message of length %d bytes\n", message_length);
-                
                 unsigned char message_buffer[LWS_PRE + MAX_MESSAGE_LENGTH];
                 memcpy(&message_buffer[LWS_PRE], message_to_send, message_length);
                 
                 int result = lws_write(wsi, &message_buffer[LWS_PRE], message_length, LWS_WRITE_TEXT);
                 if (result < 0) {
                     printf("❌ Failed to send message (error: %d)\n", result);
-                } else {
-                    printf("🔍 DEBUG: lws_write returned %d bytes (expected %d)\n", result, message_length);
                 }
                 
                 // If there are more messages in queue, schedule another write
@@ -162,9 +154,6 @@ int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
                 incoming_buffer_len = 0;
                 incoming_buffer[0] = '\0';
             }
-
-            // Debug: Print the raw WebSocket message
-            printf("[%s] 🔍 DEBUG: Raw WebSocket message: %s\n", timestamp, incoming_buffer);
 
             // Try to parse as JSON transcription message
             if (strstr(incoming_buffer, "\"type\":\"transcription\"") != NULL) {
