@@ -10,6 +10,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/satriahrh/cocoa-fruit/agentic/adapters/speech"
+	"github.com/satriahrh/cocoa-fruit/agentic/adapters/tts"
 	"github.com/satriahrh/cocoa-fruit/agentic/usecase"
 	"github.com/satriahrh/cocoa-fruit/agentic/utils/log"
 	"go.uber.org/zap"
@@ -28,6 +29,7 @@ type Client struct {
 	deviceVersion string
 	chatService   *usecase.ChatService
 	googleSpeech  *speech.GoogleSpeech
+	googleTTS     *tts.GoogleTTS
 	inputChan     chan string
 	outputChan    chan string
 }
@@ -89,7 +91,7 @@ func isPrintableText(data []byte) bool {
 }
 
 // NewClient creates a new WebSocket client
-func NewClient(conn *websocket.Conn, userID int, deviceID, deviceVersion string, chatService *usecase.ChatService, googleSpeech *speech.GoogleSpeech) *Client {
+func NewClient(conn *websocket.Conn, userID int, deviceID, deviceVersion string, chatService *usecase.ChatService, googleSpeech *speech.GoogleSpeech, googleTTS *tts.GoogleTTS) *Client {
 	ctx := context.TODO()
 	ctx = context.WithValue(ctx, "user_id", userID)
 	ctx = context.WithValue(ctx, "device_id", deviceID)
@@ -107,6 +109,7 @@ func NewClient(conn *websocket.Conn, userID int, deviceID, deviceVersion string,
 		deviceVersion: deviceVersion,
 		chatService:   chatService,
 		googleSpeech:  googleSpeech,
+		googleTTS:     googleTTS,
 		inputChan:     make(chan string, 10),
 		outputChan:    make(chan string, 10),
 	}
@@ -126,6 +129,11 @@ func (c *Client) Run() {
 	go c.Ping()
 	go c.readPump()
 	go c.writePump()
+
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		c.outputChan <- "Halo Yaya, apa kabar?"
+	}()
 }
 
 // setupHandlers configures all WebSocket message handlers
@@ -203,16 +211,57 @@ func (c *Client) startChatService() {
 	}
 }
 
-// handleChatResponses handles responses from the chat service
+// handleChatResponses handles responses from the chat service and synthesizes audio
 func (c *Client) handleChatResponses() {
 	for {
 		select {
 		case response := <-c.outputChan:
 			if !c.IsClosed() {
-				// Send response back to the doll as raw text
-				if err := c.SendMessage([]byte(response)); err != nil {
-					log.WithCtx(c.ctx).Error("❌ Failed to send response to doll", zap.Error(err))
+				// Synthesize audio from LLM response
+				log.WithCtx(c.ctx).Info("🎵 Synthesizing audio from LLM response",
+					zap.String("response", response),
+					zap.String("device_id", c.deviceID),
+					zap.Int("user_id", c.userID))
+
+				// Start streaming synthesis
+				audioChan, err := c.googleTTS.StreamingSynthesize(c.ctx, response)
+				if err != nil {
+					log.WithCtx(c.ctx).Error("❌ Failed to start audio synthesis", zap.Error(err))
+					// Fallback to text if TTS fails
+					if err := c.SendMessage([]byte(response)); err != nil {
+						log.WithCtx(c.ctx).Error("❌ Failed to send fallback text to doll", zap.Error(err))
+					}
+					continue
 				}
+
+				// Stream audio chunks to the doll
+				chunkCount := 0
+				for audioChunk := range audioChan {
+					if audioChunk == nil {
+						log.WithCtx(c.ctx).Error("❌ Audio synthesis error")
+						break
+					}
+
+					chunkCount++
+					log.WithCtx(c.ctx).Debug("📤 Streaming audio chunk",
+						zap.Int("chunk_number", chunkCount),
+						zap.Int("chunk_size", len(audioChunk)),
+						zap.String("device_id", c.deviceID))
+
+					// Send audio chunk as binary message
+					if err := c.conn.WriteMessage(websocket.BinaryMessage, audioChunk); err != nil {
+						log.WithCtx(c.ctx).Error("❌ Failed to send audio chunk to doll",
+							zap.Error(err),
+							zap.Int("chunk_number", chunkCount),
+							zap.String("device_id", c.deviceID))
+						break
+					}
+				}
+
+				log.WithCtx(c.ctx).Info("✅ Audio streaming completed",
+					zap.Int("total_chunks", chunkCount),
+					zap.String("device_id", c.deviceID),
+					zap.Int("user_id", c.userID))
 			}
 		case <-c.ctx.Done():
 			return

@@ -43,14 +43,14 @@ func (g *GoogleSpeech) TranscribeAudio(ctx context.Context, base64Audio string) 
 	// Create recognition config
 	config := &speechpb.RecognitionConfig{
 		Encoding:          speechpb.RecognitionConfig_LINEAR16,
-		SampleRateHertz:   16000,
+		SampleRateHertz:   8000, // Use 8kHz for MULAW compatibility
 		LanguageCode:      "id-ID",
 		AudioChannelCount: 1, // Mono
 	}
 
 	log.WithCtx(ctx).Info("⚙️ Created recognition config",
 		zap.String("encoding", "LINEAR16"),
-		zap.Int("sample_rate", 16000),
+		zap.Int("sample_rate", 8000),
 		zap.String("language", "id-ID"),
 		zap.Int("channels", 1))
 
@@ -123,7 +123,7 @@ func (g *GoogleSpeech) TranscribeStreaming(ctx context.Context, audioChunks <-ch
 			StreamingConfig: &speechpb.StreamingRecognitionConfig{
 				Config: &speechpb.RecognitionConfig{
 					Encoding:          speechpb.RecognitionConfig_LINEAR16,
-					SampleRateHertz:   16000,
+					SampleRateHertz:   8000, // Use 8kHz for MULAW compatibility
 					LanguageCode:      "id-ID",
 					AudioChannelCount: 1, // Mono
 				},

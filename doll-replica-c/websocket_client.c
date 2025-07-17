@@ -144,6 +144,33 @@ int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
             char timestamp[16];
             get_timestamp(timestamp, sizeof(timestamp));
 
+            // Check if this is binary data (audio chunks)
+            if (lws_frame_is_binary(wsi)) {
+                printf("[%s] 🎵 Received audio chunk (%zu bytes)\n", timestamp, len);
+                
+                // Start streaming audio playback if not already active
+                if (!is_streaming_audio_active()) {
+                    if (start_streaming_audio_playback()) {
+                        printf("[%s] 🎵 Started streaming audio playback\n", timestamp);
+                    } else {
+                        printf("[%s] ❌ Failed to start streaming audio playback\n", timestamp);
+                        break;
+                    }
+                }
+                
+                // Play the audio chunk
+                if (play_audio_chunk((const unsigned char *)in, len)) {
+                    printf("[%s] ✅ Audio chunk played successfully\n", timestamp);
+                } else {
+                    printf("[%s] ❌ Failed to play audio chunk\n", timestamp);
+                }
+                
+                printf("> ");
+                fflush(stdout);
+                break;
+            }
+
+            // Handle text messages (transcription responses)
             // Append incoming data to buffer
             if (incoming_buffer_len + len < INCOMING_BUFFER_SIZE) {
                 memcpy(incoming_buffer + incoming_buffer_len, in, len);
@@ -207,6 +234,12 @@ int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
         case LWS_CALLBACK_CLOSED:
             printf("🔌 Connection closed\n");
             websocket_connection = NULL;
+            
+            // Stop streaming audio playback
+            if (is_streaming_audio_active()) {
+                stop_streaming_audio_playback();
+            }
+            
             should_exit = 1;
             break;
             

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <pthread.h>
 
 static PaStream *audio_stream = NULL;
 static PaStream *recording_stream = NULL;
@@ -17,6 +18,18 @@ static size_t max_recording_size;
 
 // Streaming callback
 static audio_chunk_callback streaming_callback = NULL;
+
+// Streaming audio playback variables
+static int streaming_audio_active = 0;
+static unsigned char *streaming_audio_buffer = NULL;
+static size_t streaming_audio_buffer_size = 0;
+static size_t streaming_audio_buffer_used = 0;
+static pthread_mutex_t streaming_audio_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t streaming_audio_cond = PTHREAD_COND_INITIALIZER;
+
+// Ring buffer for smooth streaming
+static AudioRingBuffer *streaming_ring_buffer = NULL;
+static PaStream *streaming_stream = NULL;
 
 // Base64 decoding table (same as in utils.c)
 static const char base64_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -33,7 +46,7 @@ static int recording_callback(const void *inputBuffer, void *outputBuffer,
     (void)userData;     // Unused
     
     if (inputBuffer && recording_active) {
-        size_t bytes_to_write = framesPerBuffer * CHANNELS * 2; // 2 bytes per sample
+        size_t bytes_to_write = framesPerBuffer * CHANNELS * 1; // 1 byte per sample (MULAW)
         
         // If streaming callback is set, send chunk immediately
         if (streaming_callback) {
@@ -128,6 +141,11 @@ void cleanup_audio(void) {
         Pa_StopStream(audio_stream);
         Pa_CloseStream(audio_stream);
         audio_stream = NULL;
+    }
+    
+    // Cleanup streaming
+    if (streaming_audio_active) {
+        stop_streaming_audio_playback();
     }
     
     if (audio_initialized) {
@@ -314,25 +332,22 @@ int play_audio_data(const unsigned char *audio_data, size_t data_size) {
         data_size -= pcm_offset;
     }
     
-    // Ensure data size is a multiple of 2 (16-bit samples)
-    if (data_size % 2 != 0) {
-        printf("⚠️  Audio data size not multiple of 2, trimming last byte\n");
-        data_size--;
-    }
+    // For MULAW (8-bit), data size should be fine as-is
+    // No need to check for even/odd since each sample is 1 byte
     
     // Restart the stream before playback
     Pa_StopStream(audio_stream);
     Pa_StartStream(audio_stream);
     
     // Write audio data in chunks to avoid buffer underflow
-    size_t chunk_size = FRAMES_PER_BUFFER * CHANNELS * 2; // 2 bytes per sample
+    size_t chunk_size = FRAMES_PER_BUFFER * CHANNELS * 1; // 1 byte per sample (MULAW)
     size_t offset = 0;
     
     while (offset < data_size) {
         size_t bytes_to_write = (offset + chunk_size > data_size) ? 
                                (data_size - offset) : chunk_size;
         
-        PaError err = Pa_WriteStream(audio_stream, audio_data + offset, bytes_to_write / 2);
+        PaError err = Pa_WriteStream(audio_stream, audio_data + offset, bytes_to_write);
         if (err != paNoError) {
             printf("❌ Failed to play audio: %s\n", Pa_GetErrorText(err));
             return 0;
@@ -395,6 +410,339 @@ int play_audio_from_base64(const char *base64_audio) {
     
     int result = play_audio_data(audio_data, audio_size);
     free(audio_data);
+    
+    return result;
+}
+
+// ============================================================================
+// RING BUFFER FUNCTIONS
+// ============================================================================
+
+// Initialize ring buffer
+AudioRingBuffer* init_audio_ring_buffer(size_t size) {
+    AudioRingBuffer *rb = malloc(sizeof(AudioRingBuffer));
+    if (!rb) {
+        printf("❌ Failed to allocate ring buffer structure\n");
+        return NULL;
+    }
+    
+    rb->buffer = malloc(size);
+    if (!rb->buffer) {
+        printf("❌ Failed to allocate ring buffer memory\n");
+        free(rb);
+        return NULL;
+    }
+    
+    rb->size = size;
+    rb->used = 0;
+    rb->read_pos = 0;
+    rb->write_pos = 0;
+    rb->active = 1;
+    
+    pthread_mutex_init(&rb->mutex, NULL);
+    pthread_cond_init(&rb->not_empty, NULL);
+    pthread_cond_init(&rb->not_full, NULL);
+    
+    printf("✅ Ring buffer initialized (%zu bytes)\n", size);
+    return rb;
+}
+
+// Write to ring buffer
+int write_audio_buffer(AudioRingBuffer *rb, const unsigned char *data, size_t size) {
+    if (!rb || !rb->active) return 0;
+    
+    pthread_mutex_lock(&rb->mutex);
+    
+    // Wait if buffer is full
+    while (rb->used + size > rb->size && rb->active) {
+        pthread_cond_wait(&rb->not_full, &rb->mutex);
+    }
+    
+    if (!rb->active) {
+        pthread_mutex_unlock(&rb->mutex);
+        return 0;
+    }
+    
+    // Write data to buffer
+    size_t first_chunk = rb->size - rb->write_pos;
+    if (first_chunk > size) first_chunk = size;
+    
+    memcpy(rb->buffer + rb->write_pos, data, first_chunk);
+    
+    if (first_chunk < size) {
+        memcpy(rb->buffer, data + first_chunk, size - first_chunk);
+    }
+    
+    rb->write_pos = (rb->write_pos + size) % rb->size;
+    rb->used += size;
+    
+    pthread_cond_signal(&rb->not_empty);
+    pthread_mutex_unlock(&rb->mutex);
+    
+    return 1;
+}
+
+// Read from ring buffer
+int read_audio_buffer(AudioRingBuffer *rb, unsigned char *data, size_t size) {
+    if (!rb || !rb->active) return 0;
+    
+    pthread_mutex_lock(&rb->mutex);
+    
+    // Wait if buffer is empty
+    while (rb->used < size && rb->active) {
+        pthread_cond_wait(&rb->not_empty, &rb->mutex);
+    }
+    
+    if (!rb->active) {
+        pthread_mutex_unlock(&rb->mutex);
+        return 0;
+    }
+    
+    // Read data from buffer
+    size_t first_chunk = rb->size - rb->read_pos;
+    if (first_chunk > size) first_chunk = size;
+    
+    memcpy(data, rb->buffer + rb->read_pos, first_chunk);
+    
+    if (first_chunk < size) {
+        memcpy(data + first_chunk, rb->buffer, size - first_chunk);
+    }
+    
+    rb->read_pos = (rb->read_pos + size) % rb->size;
+    rb->used -= size;
+    
+    pthread_cond_signal(&rb->not_full);
+    pthread_mutex_unlock(&rb->mutex);
+    
+    return 1;
+}
+
+// Cleanup ring buffer
+void cleanup_audio_ring_buffer(AudioRingBuffer *rb) {
+    if (!rb) return;
+    
+    pthread_mutex_lock(&rb->mutex);
+    rb->active = 0;
+    pthread_cond_signal(&rb->not_empty);
+    pthread_cond_signal(&rb->not_full);
+    pthread_mutex_unlock(&rb->mutex);
+    
+    pthread_mutex_destroy(&rb->mutex);
+    pthread_cond_destroy(&rb->not_empty);
+    pthread_cond_destroy(&rb->not_full);
+    
+    if (rb->buffer) {
+        free(rb->buffer);
+    }
+    free(rb);
+}
+
+// ============================================================================
+// STREAMING AUDIO PLAYBACK FUNCTIONS
+// ============================================================================
+
+// Streaming playback callback
+static int streaming_playback_callback(const void *inputBuffer, void *outputBuffer,
+                                      unsigned long framesPerBuffer,
+                                      const PaStreamCallbackTimeInfo *timeInfo,
+                                      PaStreamCallbackFlags statusFlags,
+                                      void *userData) {
+    (void)inputBuffer; // Unused
+    (void)timeInfo;    // Unused
+    (void)userData;    // Unused
+    
+    if (statusFlags & paOutputUnderflow) {
+        printf("⚠️  Audio underflow detected\n");
+    }
+    
+    if (streaming_ring_buffer && streaming_ring_buffer->active) {
+        size_t bytes_needed = framesPerBuffer * CHANNELS * 1; // 1 byte per sample (MULAW)
+        unsigned char *temp_buffer = malloc(bytes_needed);
+        
+        if (read_audio_buffer(streaming_ring_buffer, temp_buffer, bytes_needed)) {
+            memcpy(outputBuffer, temp_buffer, bytes_needed);
+        } else {
+            // Buffer underrun - fill with silence
+            memset(outputBuffer, 0, bytes_needed);
+        }
+        
+        free(temp_buffer);
+    } else {
+        // No data - fill with silence
+        size_t bytes_needed = framesPerBuffer * CHANNELS * 1;
+        memset(outputBuffer, 0, bytes_needed);
+    }
+    
+    return paContinue;
+}
+
+// LINEAR16 (PCM) audio format detection and handling for Google TTS streaming
+static int is_linear16_data(const unsigned char *data, size_t size) {
+    // LINEAR16 is raw PCM data at 24000 Hz, 16-bit, mono
+    // We'll assume any data that's not obviously MP3 is LINEAR16
+    if (size < 2) return 0;
+    
+    // Check for MP3 sync word to exclude MP3 data
+    if (data[0] == 0xFF && (data[1] == 0xFB || data[1] == 0xFA)) {
+        return 0; // This is MP3
+    }
+    
+    // Check for ID3v2 header to exclude MP3 data
+    if (size >= 10 && 
+        data[0] == 'I' && data[1] == 'D' && data[2] == '3' &&
+        data[3] >= 0x02 && data[3] <= 0x04) {
+        return 0; // This is MP3
+    }
+    
+    // Assume it's LINEAR16 PCM data from Google TTS streaming
+    return 1;
+}
+
+// Handle LINEAR16 PCM audio data (Google TTS streaming format)
+static int handle_linear16_audio(const unsigned char *audio_data, size_t audio_size, 
+                                unsigned char **pcm_data, size_t *pcm_size) {
+    printf("🎵 Processing MULAW audio data (%zu bytes, 8000 Hz)\n", audio_size);
+    
+    // MULAW data from Google TTS streaming - PortAudio supports MULAW natively
+    // Format: 8000 Hz, 8-bit MULAW, mono
+    // Just copy the data for playback
+    *pcm_data = malloc(audio_size);
+    if (!*pcm_data) {
+        printf("❌ Failed to allocate memory for PCM data\n");
+        return 0;
+    }
+    
+    memcpy(*pcm_data, audio_data, audio_size);
+    *pcm_size = audio_size;
+    
+    printf("✅ MULAW audio data ready for playback (8000 Hz)\n");
+    return 1;
+}
+
+// Start streaming audio playback
+int start_streaming_audio_playback(void) {
+    if (!audio_initialized) {
+        printf("❌ Audio system not initialized\n");
+        return 0;
+    }
+    
+    if (streaming_audio_active) {
+        printf("⚠️  Streaming audio already active\n");
+        return 0;
+    }
+    
+    // Initialize ring buffer
+    streaming_ring_buffer = init_audio_ring_buffer(1024 * 1024); // 1MB buffer
+    if (!streaming_ring_buffer) {
+        printf("❌ Failed to initialize ring buffer\n");
+        return 0;
+    }
+    
+    // Configure output parameters
+    PaStreamParameters outputParameters;
+    outputParameters.device = Pa_GetDefaultOutputDevice();
+    outputParameters.channelCount = CHANNELS;
+    outputParameters.sampleFormat = AUDIO_FORMAT;
+    outputParameters.suggestedLatency = Pa_GetDeviceInfo(outputParameters.device)->defaultLowOutputLatency;
+    outputParameters.hostApiSpecificStreamInfo = NULL;
+    
+    // Open streaming stream with callback
+    PaError err = Pa_OpenStream(&streaming_stream,
+                               NULL,                    // No input
+                               &outputParameters,       // Output
+                               SAMPLE_RATE,             // Sample rate
+                               FRAMES_PER_BUFFER,       // Frames per buffer
+                               paClipOff | paDitherOff, // Stream flags
+                               streaming_playback_callback, // Callback
+                               NULL);                   // User data
+    
+    if (err != paNoError) {
+        printf("❌ Failed to open streaming stream: %s\n", Pa_GetErrorText(err));
+        cleanup_audio_ring_buffer(streaming_ring_buffer);
+        streaming_ring_buffer = NULL;
+        return 0;
+    }
+    
+    // Start the stream
+    err = Pa_StartStream(streaming_stream);
+    if (err != paNoError) {
+        printf("❌ Failed to start streaming stream: %s\n", Pa_GetErrorText(err));
+        Pa_CloseStream(streaming_stream);
+        cleanup_audio_ring_buffer(streaming_ring_buffer);
+        streaming_ring_buffer = NULL;
+        streaming_stream = NULL;
+        return 0;
+    }
+    
+    streaming_audio_active = 1;
+    printf("✅ Streaming audio playback started with ring buffer\n");
+    return 1;
+}
+
+// Stop streaming audio playback
+int stop_streaming_audio_playback(void) {
+    if (!streaming_audio_active) {
+        return 0;
+    }
+    
+    streaming_audio_active = 0;
+    
+    // Stop and close streaming stream
+    if (streaming_stream) {
+        Pa_StopStream(streaming_stream);
+        Pa_CloseStream(streaming_stream);
+        streaming_stream = NULL;
+    }
+    
+    // Cleanup ring buffer
+    if (streaming_ring_buffer) {
+        cleanup_audio_ring_buffer(streaming_ring_buffer);
+        streaming_ring_buffer = NULL;
+    }
+    
+    printf("⏹️  Streaming audio playback stopped\n");
+    return 1;
+}
+
+// Check if streaming audio is active
+int is_streaming_audio_active(void) {
+    return streaming_audio_active;
+}
+
+// Play an audio chunk (called from WebSocket callback)
+int play_audio_chunk(const unsigned char *audio_chunk, size_t chunk_size) {
+    if (!streaming_audio_active || !streaming_ring_buffer) {
+        printf("❌ Streaming audio not active or ring buffer not initialized\n");
+        return 0;
+    }
+    
+    if (!audio_chunk || chunk_size == 0) {
+        printf("❌ Invalid audio chunk\n");
+        return 0;
+    }
+    
+    printf("🎵 Adding audio chunk to ring buffer (%zu bytes)\n", chunk_size);
+    
+    // Handle MULAW audio data from Google TTS streaming
+    unsigned char *pcm_data;
+    size_t pcm_size;
+    
+    if (!handle_linear16_audio(audio_chunk, chunk_size, &pcm_data, &pcm_size)) {
+        printf("❌ Failed to process audio chunk\n");
+        return 0;
+    }
+    
+    // Write to ring buffer (non-blocking)
+    int result = write_audio_buffer(streaming_ring_buffer, pcm_data, pcm_size);
+    
+    // Clean up
+    free(pcm_data);
+    
+    if (result) {
+        printf("✅ Audio chunk added to ring buffer successfully\n");
+    } else {
+        printf("❌ Failed to add audio chunk to ring buffer\n");
+    }
     
     return result;
 } 
