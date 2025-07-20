@@ -2,8 +2,11 @@ package tts
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"text/tabwriter"
 
 	texttospeech "cloud.google.com/go/texttospeech/apiv1"
@@ -16,6 +19,7 @@ type GoogleTTS struct {
 	LanguageCode  string
 	AudioEncoding texttospeechpb.AudioEncoding
 	SampleRate    int32
+	cacheDir      string
 }
 
 type GoogleTTSConfig struct {
@@ -40,6 +44,10 @@ func mapAudioEncoding(enc string) texttospeechpb.AudioEncoding {
 }
 
 func NewGoogleTTS(cfg GoogleTTSConfig) *GoogleTTS {
+	cacheDir := "tts_cache"
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		fmt.Printf("Failed to create cache dir: %v\n", err)
+	}
 	client, err := texttospeech.NewClient(context.Background())
 	if err != nil {
 		panic(fmt.Errorf("creating Google tts client: %w", err))
@@ -54,15 +62,12 @@ func NewGoogleTTS(cfg GoogleTTSConfig) *GoogleTTS {
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0)
 	for _, voice := range resp.Voices {
-		// Display the voice's name. Example: tpc-vocoded
 		fmt.Fprintf(w, "Name: %v\n", voice.Name)
-
 		for _, languageCode := range voice.LanguageCodes {
 			fmt.Fprintf(w, "  Supported language: %v\n", languageCode)
 		}
 		fmt.Fprintf(w, "  SSML Voice Gender: %v\n", voice.SsmlGender.String())
-		fmt.Fprintf(w, "  Natural Sample Rate Hertz: %v\n",
-			voice.NaturalSampleRateHertz)
+		fmt.Fprintf(w, "  Natural Sample Rate Hertz: %v\n", voice.NaturalSampleRateHertz)
 	}
 	w.Flush()
 
@@ -72,10 +77,23 @@ func NewGoogleTTS(cfg GoogleTTSConfig) *GoogleTTS {
 		LanguageCode:  cfg.LanguageCode,
 		AudioEncoding: mapAudioEncoding(cfg.AudioEncoding),
 		SampleRate:    cfg.SampleRate,
+		cacheDir:      cacheDir,
 	}
 }
 
 func (g *GoogleTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
+	// Hash the text for cache key
+	h := sha256.New()
+	h.Write([]byte(text))
+	key := hex.EncodeToString(h.Sum(nil))
+
+	filename := key + ".bin"
+	path := filepath.Join(g.cacheDir, filename)
+	// Check cache
+	if data, err := os.ReadFile(path); err == nil {
+		return data, nil
+	}
+
 	req := texttospeechpb.SynthesizeSpeechRequest{
 		Input: &texttospeechpb.SynthesisInput{
 			InputSource: &texttospeechpb.SynthesisInput_Text{
@@ -97,7 +115,9 @@ func (g *GoogleTTS) Synthesize(ctx context.Context, text string) ([]byte, error)
 		return nil, fmt.Errorf("synthesizing speech: %w", err)
 	}
 
-	return resp.GetAudioContent(), nil
+	audio := resp.GetAudioContent()
+	os.WriteFile(path, audio, 0644)
+	return audio, nil
 }
 
 // StreamingSynthesize uses Google Cloud TTS streaming synthesis for real-time audio streaming
