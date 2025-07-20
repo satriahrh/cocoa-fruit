@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"log"
 
 	"github.com/labstack/echo/v4"
@@ -18,6 +19,12 @@ import (
 func main() {
 	gotenv.Load()
 
+	voiceName := flag.String("voice", "id-ID-Wavenet-B", "Google TTS voice name")
+	languageCode := flag.String("lang", "id-ID", "Google TTS language code")
+	audioEncoding := flag.String("encoding", "LINEAR16", "Audio encoding (LINEAR16, MULAW, ALAW)")
+	sampleRate := flag.Int("samplerate", 16000, "Sample rate in Hz")
+	flag.Parse()
+
 	// Initialize message broker (channel-based for now)
 	messageBroker := message_broker.NewChannelMessageBroker()
 	defer messageBroker.Close()
@@ -25,7 +32,14 @@ func main() {
 	// Initialize services
 	geminiLlm := llm.NewGeminiClient()
 	svc := usecase.NewChatService(geminiLlm)
-	googleTTS := tts.NewGoogleTTS()
+	googleTTS := tts.NewGoogleTTS(
+		tts.GoogleTTSConfig{
+			VoiceName:     *voiceName,
+			LanguageCode:  *languageCode,
+			AudioEncoding: *audioEncoding,
+			SampleRate:    int32(*sampleRate),
+		},
+	)
 	googleSpeech := speech.NewGoogleSpeech()
 
 	// Initialize WebSocket server with message broker

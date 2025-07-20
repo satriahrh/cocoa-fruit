@@ -11,17 +11,42 @@ import (
 )
 
 type GoogleTTS struct {
-	client *texttospeech.Client
+	client        *texttospeech.Client
+	VoiceName     string
+	LanguageCode  string
+	AudioEncoding texttospeechpb.AudioEncoding
+	SampleRate    int32
 }
 
-func NewGoogleTTS() *GoogleTTS {
+type GoogleTTSConfig struct {
+	VoiceName     string
+	LanguageCode  string
+	AudioEncoding string // now a string, not pb type
+	SampleRate    int32
+}
+
+func mapAudioEncoding(enc string) texttospeechpb.AudioEncoding {
+	switch enc {
+	case "LINEAR16":
+		return texttospeechpb.AudioEncoding_LINEAR16
+		// ...existing code...
+	case "MULAW":
+		return texttospeechpb.AudioEncoding_MULAW
+	case "ALAW":
+		return texttospeechpb.AudioEncoding_ALAW
+	default:
+		return texttospeechpb.AudioEncoding_LINEAR16
+	}
+}
+
+func NewGoogleTTS(cfg GoogleTTSConfig) *GoogleTTS {
 	client, err := texttospeech.NewClient(context.Background())
 	if err != nil {
 		panic(fmt.Errorf("creating Google tts client: %w", err))
 	}
 
 	resp, err := client.ListVoices(context.Background(), &texttospeechpb.ListVoicesRequest{
-		LanguageCode: "id-ID",
+		LanguageCode: cfg.LanguageCode,
 	})
 	if err != nil {
 		panic(fmt.Errorf("listing voices: %w", err))
@@ -32,22 +57,21 @@ func NewGoogleTTS() *GoogleTTS {
 		// Display the voice's name. Example: tpc-vocoded
 		fmt.Fprintf(w, "Name: %v\n", voice.Name)
 
-		// Display the supported language codes for this voice. Example: "en-US"
 		for _, languageCode := range voice.LanguageCodes {
 			fmt.Fprintf(w, "  Supported language: %v\n", languageCode)
 		}
-
-		// Display the SSML Voice Gender.
 		fmt.Fprintf(w, "  SSML Voice Gender: %v\n", voice.SsmlGender.String())
-
-		// Display the natural sample rate hertz for this voice. Example: 24000
 		fmt.Fprintf(w, "  Natural Sample Rate Hertz: %v\n",
 			voice.NaturalSampleRateHertz)
 	}
 	w.Flush()
 
 	return &GoogleTTS{
-		client: client,
+		client:        client,
+		VoiceName:     cfg.VoiceName,
+		LanguageCode:  cfg.LanguageCode,
+		AudioEncoding: mapAudioEncoding(cfg.AudioEncoding),
+		SampleRate:    cfg.SampleRate,
 	}
 }
 
@@ -59,12 +83,13 @@ func (g *GoogleTTS) Synthesize(ctx context.Context, text string) ([]byte, error)
 			},
 		},
 		Voice: &texttospeechpb.VoiceSelectionParams{
-			LanguageCode: "id-ID",
-			Name:         "id-ID-Wavenet-B",
+			LanguageCode: g.LanguageCode,
+			Name:         g.VoiceName,
 			SsmlGender:   texttospeechpb.SsmlVoiceGender_MALE,
 		},
 		AudioConfig: &texttospeechpb.AudioConfig{
-			AudioEncoding: texttospeechpb.AudioEncoding_MP3,
+			AudioEncoding:   g.AudioEncoding,
+			SampleRateHertz: g.SampleRate,
 		},
 	}
 	resp, err := g.client.SynthesizeSpeech(ctx, &req)
@@ -100,47 +125,26 @@ func (g *GoogleTTS) StreamingSynthesize(ctx context.Context, text string) (<-cha
 			StreamingRequest: &texttospeechpb.StreamingSynthesizeRequest_StreamingConfig{
 				StreamingConfig: &texttospeechpb.StreamingSynthesizeConfig{
 					Voice: &texttospeechpb.VoiceSelectionParams{
-						LanguageCode: "id-ID",
-						Name:         "id-ID-Chirp3-HD-Achernar", // Chirp3-HD voice
+						LanguageCode: g.LanguageCode,
+						Name:         g.VoiceName,
 						SsmlGender:   texttospeechpb.SsmlVoiceGender_FEMALE,
 					},
 					StreamingAudioConfig: &texttospeechpb.StreamingAudioConfig{
-						AudioEncoding:   texttospeechpb.AudioEncoding_ALAW,
-						SampleRateHertz: 8000, // ALAW requires 8kHz
+						AudioEncoding:   g.AudioEncoding,
+						SampleRateHertz: g.SampleRate,
 					},
 				},
 			},
 		}
 
 		if err := stream.Send(&config); err != nil {
-			fmt.Printf("❌ Chirp3-HD ALAW failed, trying Standard LINEAR16: %v\n", err)
-
-			// Fallback to Standard voice with LINEAR16
-			config = texttospeechpb.StreamingSynthesizeRequest{
-				StreamingRequest: &texttospeechpb.StreamingSynthesizeRequest_StreamingConfig{
-					StreamingConfig: &texttospeechpb.StreamingSynthesizeConfig{
-						Voice: &texttospeechpb.VoiceSelectionParams{
-							LanguageCode: "id-ID",
-							Name:         "id-ID-Standard-B", // Standard voice
-							SsmlGender:   texttospeechpb.SsmlVoiceGender_MALE,
-						},
-						StreamingAudioConfig: &texttospeechpb.StreamingAudioConfig{
-							AudioEncoding:   texttospeechpb.AudioEncoding_LINEAR16,
-							SampleRateHertz: 16000, // LINEAR16 at 16kHz
-						},
-					},
-				},
-			}
-
-			if err := stream.Send(&config); err != nil {
-				fmt.Printf("❌ Failed to send fallback config: %v\n", err)
-				select {
-				case audioChan <- nil:
-				case <-ctx.Done():
-					return
-				}
+			fmt.Printf("❌ Failed to send fallback config: %v\n", err)
+			select {
+			case audioChan <- nil:
+			case <-ctx.Done():
 				return
 			}
+			return
 		}
 
 		// Send the input text

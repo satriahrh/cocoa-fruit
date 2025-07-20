@@ -224,7 +224,7 @@ func (c *Client) handleChatResponses() {
 					zap.Int("user_id", c.userID))
 
 				// Start streaming synthesis
-				audioChan, err := c.googleTTS.StreamingSynthesize(c.ctx, response)
+				audioChan, err := c.googleTTS.Synthesize(c.ctx, response)
 				if err != nil {
 					log.WithCtx(c.ctx).Error("❌ Failed to start audio synthesis", zap.Error(err))
 					// Fallback to text if TTS fails
@@ -234,34 +234,25 @@ func (c *Client) handleChatResponses() {
 					continue
 				}
 
-				// Stream audio chunks to the doll
-				chunkCount := 0
-				for audioChunk := range audioChan {
-					if audioChunk == nil {
-						log.WithCtx(c.ctx).Error("❌ Audio synthesis error")
-						break
-					}
+				// ...existing code...
 
-					chunkCount++
-					log.WithCtx(c.ctx).Debug("📤 Streaming audio chunk",
-						zap.Int("chunk_number", chunkCount),
-						zap.Int("chunk_size", len(audioChunk)),
-						zap.String("device_id", c.deviceID))
+				// Log the first 32 bytes of audio for debugging
+				log.WithCtx(c.ctx).Info("🔊 First 32 bytes of audio data:",
+					zap.String("audio_data", fmt.Sprintf("%X", audioChan[:32])))
 
-					// Send audio chunk as binary message
-					if err := c.conn.WriteMessage(websocket.BinaryMessage, audioChunk); err != nil {
-						log.WithCtx(c.ctx).Error("❌ Failed to send audio chunk to doll",
-							zap.Error(err),
-							zap.Int("chunk_number", chunkCount),
-							zap.String("device_id", c.deviceID))
-						break
-					}
+				// ...existing code...
+				if audioChan == nil {
+					log.WithCtx(c.ctx).Error("❌ Audio synthesis error")
+					continue
 				}
+				// ...existing code...
+				// ...existing code...
 
-				log.WithCtx(c.ctx).Info("✅ Audio streaming completed",
-					zap.Int("total_chunks", chunkCount),
-					zap.String("device_id", c.deviceID),
-					zap.Int("user_id", c.userID))
+				if err := c.conn.WriteMessage(websocket.BinaryMessage, audioChan); err != nil {
+					// ...existing code...
+					continue
+				}
+				// ...existing code...
 			}
 		case <-c.ctx.Done():
 			return

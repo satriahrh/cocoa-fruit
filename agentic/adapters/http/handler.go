@@ -30,7 +30,7 @@ const (
 
 	// Audio settings
 	MaxAudioDuration = 60 * time.Second
-	SupportedFormats = "wav,mp3,flac,m4a"
+	SupportedFormats = "wav,flac,m4a"
 
 	// Message broker settings
 	TranscriptionTopic = "transcription.results"
